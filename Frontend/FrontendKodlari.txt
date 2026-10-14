@@ -1,0 +1,3891 @@
+======================================= 
+DOSYA: vite.config.ts 
+======================================= 
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { fileURLToPath, URL } from 'node:url';
+
+const API_TARGET = process.env.VITE_API_PROXY_TARGET || 'https://localhost:5001';
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: API_TARGET,
+        changeOrigin: true,
+        secure: false,
+      },
+      '/notificationHub': {
+        target: API_TARGET,
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
+    },
+  },
+  optimizeDeps: {
+    exclude: ['lucide-react'],
+  },
+});
+
+======================================= 
+DOSYA: package.json 
+======================================= 
+{
+  "name": "vite-react-typescript-starter",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^10.0.11",
+    "@supabase/supabase-js": "^2.57.4",
+    "axios": "^1.20.0",
+    "lucide-react": "^0.446.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.1",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.18",
+    "eslint": "^9.9.1",
+    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
+    "eslint-plugin-react-refresh": "^0.4.11",
+    "globals": "^15.9.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.5.3",
+    "typescript-eslint": "^8.3.0",
+    "vite": "^5.4.2"
+  }
+}
+
+======================================= 
+DOSYA: tsconfig.app.json 
+======================================= 
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Path alias — depth-invariant imports for src (@/foo === src/foo from any file) */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+
+======================================= 
+DOSYA: tsconfig.json 
+======================================= 
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+
+======================================= 
+DOSYA: tsconfig.node.json 
+======================================= 
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["vite.config.ts"]
+}
+
+======================================= 
+DOSYA: vite-env.d.ts 
+======================================= 
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_BASE_URL?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
+======================================= 
+DOSYA: App.tsx 
+======================================= 
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { AuthProvider } from '@/contexts/AuthProvider';
+import { AppProviders } from '@/contexts/AppProviders';
+import { Layout } from '@/components/Layout';
+import { StaffLayout } from '@/components/StaffLayout';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { LandingPage } from '@/pages/LandingPage';
+import { ServicesPage } from '@/pages/ServicesPage';
+import { GuestAppointmentPage } from '@/pages/GuestAppointmentPage';
+import { CustomerAppointmentPage } from '@/pages/CustomerAppointmentPage';
+import { LoginPage } from '@/pages/LoginPage';
+import { RegisterPage } from '@/pages/RegisterPage';
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
+import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
+import { MyAppointmentsPage } from '@/pages/MyAppointmentsPage';
+import { AdminPanelPage } from '@/pages/AdminPanelPage';
+import { UstaPanelPage } from '@/pages/UstaPanelPage';
+import { VeznedarPanelPage } from '@/pages/VeznedarPanelPage';
+import { DepoPanelPage } from '@/pages/DepoPanelPage';
+import { ProfilePage } from '@/pages/ProfilePage'; // (Dosya yolunun projene uygun olduğundan emin ol)
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppProviders>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/hizmetler" element={<ServicesPage />} />
+              <Route path="/randevu" element={<GuestAppointmentPage />} />
+              <Route path="/giris" element={<LoginPage />} />
+              <Route path="/kayit" element={<RegisterPage />} />
+              <Route path="/sifremi-unuttum" element={<ForgotPasswordPage />} />
+              <Route path="/sifre-sifirla" element={<ResetPasswordPage />} />
+              <Route
+                path="/randevu-olustur"
+                element={
+                  <ProtectedRoute roles={['Musteri']}>
+                    <CustomerAppointmentPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/randevularim"
+                element={
+                  <ProtectedRoute roles={['Musteri']}>
+                    <MyAppointmentsPage />
+                  </ProtectedRoute>
+                }
+              />
+            </Route>
+
+            <Route
+              element={
+                <ProtectedRoute roles={['SuperAdmin', 'Admin', 'Usta', 'Veznedar', 'DepoSorumlusu']}>
+                  <StaffLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route
+                path="/panel"
+                element={
+                  <ProtectedRoute roles={['SuperAdmin', 'Admin']}>
+                    <AdminPanelPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/usta"
+                element={
+                  <ProtectedRoute roles={['SuperAdmin', 'Admin', 'Usta']}>
+                    <UstaPanelPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/vezne"
+                element={
+                  <ProtectedRoute roles={['SuperAdmin', 'Veznedar']}>
+                    <VeznedarPanelPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/depo"
+                element={
+                  <ProtectedRoute roles={['SuperAdmin', 'Admin', 'DepoSorumlusu', 'Usta']}>
+                    <DepoPanelPage />
+                  </ProtectedRoute>
+                }
+              />
+
+                  <Route path="/profil" element={
+              <ProtectedRoute roles={['Musteri']}>
+                <ProfilePage />
+              </ProtectedRoute>
+                  } />
+            </Route>
+
+            <Route path="/admin" element={<Navigate to="/panel" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </AppProviders>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
+
+======================================= 
+DOSYA: main.tsx 
+======================================= 
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App.tsx';
+import './index.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
+
+======================================= 
+DOSYA: index.css 
+======================================= 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-ink-50 text-ink-900 font-sans;
+  }
+  h1, h2, h3, h4 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-600/20 transition-all hover:bg-brand-700 hover:shadow-brand-600/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-ink-200 bg-white px-5 py-3 text-sm font-semibold text-ink-700 shadow-sm transition-all hover:border-ink-300 hover:bg-ink-50 active:scale-[0.98];
+  }
+  .btn-accent {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-accent-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-accent-500/20 transition-all hover:bg-accent-600 active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-ink-600 transition-all hover:bg-ink-100 hover:text-ink-900;
+  }
+  .input-field {
+    @apply w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 placeholder:text-ink-400 transition-all focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+  }
+  .label-text {
+    @apply mb-1.5 block text-sm font-medium text-ink-700;
+  }
+  .card {
+    @apply rounded-2xl border border-ink-200/60 bg-white shadow-sm;
+  }
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-xl hover:shadow-ink-200/50 hover:-translate-y-1;
+  }
+  .glass {
+    @apply bg-white/80 backdrop-blur-lg;
+  }
+  .skeleton {
+    @apply bg-gradient-to-r from-ink-100 via-ink-200 to-ink-100 bg-[length:200%_100%] animate-shimmer;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+======================================= 
+DOSYA: Footer.tsx 
+======================================= 
+import { Wrench, Mail, Phone, MapPin } from 'lucide-react';
+import { Link } from 'react-router-dom';
+
+export function Footer() {
+  return (
+    <footer className="bg-ink-950 text-ink-300 mt-20">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+          {/* Brand */}
+          <div className="md:col-span-1">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-brand-600">
+                <Wrench className="h-5 w-5 text-white" />
+              </div>
+              <span className="font-display font-bold text-white text-lg">OtoServis</span>
+            </div>
+            <p className="text-sm text-ink-400 leading-relaxed">
+              Aracınız için akıllı bakım platformu. Yapay zeka destekli analiz, uzman ustalar ve hızlı servis hizmetleri.
+            </p>
+          </div>
+
+          {/* Links */}
+          <div>
+            <h4 className="text-sm font-semibold text-white mb-4">Sayfalar</h4>
+            <ul className="space-y-2 text-sm">
+              <li><Link to="/" className="hover:text-brand-400 transition-colors">Ana Sayfa</Link></li>
+              <li><Link to="/hizmetler" className="hover:text-brand-400 transition-colors">Hizmetler</Link></li>
+              <li><Link to="/randevu" className="hover:text-brand-400 transition-colors">Randevu Al</Link></li>
+              <li><Link to="/giris" className="hover:text-brand-400 transition-colors">Giriş Yap</Link></li>
+            </ul>
+          </div>
+
+          {/* Services */}
+          <div>
+            <h4 className="text-sm font-semibold text-white mb-4">Hizmetler</h4>
+            <ul className="space-y-2 text-sm text-ink-400">
+              <li>Periyodik Bakım</li>
+              <li>Motor Servisi</li>
+              <li>Fren Sistemleri</li>
+              <li>Boya & Kaporta</li>
+              <li>Diyagnostik Analiz</li>
+            </ul>
+          </div>
+
+          {/* Contact */}
+          <div>
+            <h4 className="text-sm font-semibold text-white mb-4">İletişim</h4>
+            <ul className="space-y-3 text-sm">
+              <li className="flex items-center gap-2">
+                <Phone className="h-4 w-4 text-brand-400" />
+                <span>0850 123 45 67</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-brand-400" />
+                <span>destek@otoservis.com</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-brand-400" />
+                <span>Sanayi Mah. Servis Cad. No:1</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-10 pt-6 border-t border-ink-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-xs text-ink-500">© 2026 OtoServis. Tüm hakları saklıdır.</p>
+          <p className="text-xs text-ink-500">Yapay Zeka Destekli Servis Platformu</p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+======================================= 
+DOSYA: Layout.tsx 
+======================================= 
+import { Outlet } from 'react-router-dom';
+import { Navbar } from './Navbar';
+import { Footer } from './Footer';
+
+export function Layout() {
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Navbar />
+      <main className="flex-1 pt-16">
+        <Outlet />
+      </main>
+      <Footer />
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: Loading.tsx 
+======================================= 
+import { Loader2 } from 'lucide-react';
+
+export function LoadingSpinner({ label, fullPage }: { label?: string; fullPage?: boolean }) {
+  const content = (
+    <div className="flex flex-col items-center justify-center gap-3">
+      <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
+      {label && <p className="text-sm text-ink-500">{label}</p>}
+    </div>
+  );
+
+  if (fullPage) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">{content}</div>
+    );
+  }
+  return content;
+}
+
+export function CardSkeleton() {
+  return (
+    <div className="card p-6">
+      <div className="skeleton h-6 w-3/4 rounded-lg mb-4" />
+      <div className="skeleton h-4 w-1/2 rounded-lg mb-2" />
+      <div className="skeleton h-4 w-2/3 rounded-lg" />
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: Navbar.tsx 
+======================================= 
+import { Wrench, Calendar, LayoutGrid, LogOut, LogIn, User, Menu, X, Shield } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { dashboardPath } from '@/lib/jwt';
+
+export function Navbar() {
+  const { user, logout, isAuthenticated } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    window.addEventListener('scroll', onScroll);
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
+
+  // --- KESİN VE NET ROL KONTROLLERİ ---
+  // 1. Ziyaretçi: Giriş yapmamış VEYA arka planda yanlışlıkla Misafir tokeni almış kişiler
+  const isGuest = !isAuthenticated || user?.Rol === 'Misafir' || user?.Rol === 'misafir';
+  
+  // 2. Kayıtlı Müşteri
+  const isMusteri = isAuthenticated && user?.Rol === 'Musteri';
+  
+  // 3. Personel (Admin, Usta, Vezne vb.)
+  const isStaff = isAuthenticated && !isGuest && !isMusteri;
+  
+  const panel = dashboardPath(user?.Rol);
+
+  const isActive = (path: string) =>
+    path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
+
+  // Linkler için ortak stil tanımları (Kod tekrarını önlemek için)
+  const linkBaseClass = "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all";
+  const mobileLinkBaseClass = "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-all";
+  const activeClass = "bg-brand-50 text-brand-700";
+  const inactiveClass = "text-ink-600 hover:bg-ink-100 hover:text-ink-900";
+
+  return (
+    <header
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+        scrolled ? 'glass shadow-sm border-b border-ink-200/60' : 'bg-transparent'
+      }`}
+    >
+      <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between">
+          
+          {/* SOL: LOGO */}
+          <Link to="/" className="flex items-center gap-2 group">
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 shadow-lg shadow-brand-600/20 group-hover:scale-105 transition-transform">
+              <Wrench className="h-5 w-5 text-white" />
+            </div>
+            <div className="hidden sm:block">
+              <span className="font-display font-bold text-ink-900 text-lg leading-none">OtoServis</span>
+              <span className="block text-xs text-ink-500 leading-none mt-0.5">Akıllı Bakım Platformu</span>
+            </div>
+          </Link>
+
+          {/* ORTA: DİNAMİK LİNKLER (MASAÜSTÜ) */}
+          <div className="hidden md:flex items-center gap-1">
+            <Link to="/" className={`${linkBaseClass} ${isActive('/') ? activeClass : inactiveClass}`}>
+              <LayoutGrid className="h-4 w-4" /> Ana Sayfa
+            </Link>
+            
+            <Link to="/hizmetler" className={`${linkBaseClass} ${isActive('/hizmetler') ? activeClass : inactiveClass}`}>
+              <Wrench className="h-4 w-4" /> Hizmetler
+            </Link>
+
+            {/* Sadece Ziyaretçiler Görebilir */}
+            {isGuest && (
+              <Link to="/randevu" className={`${linkBaseClass} ${isActive('/randevu') ? activeClass : inactiveClass}`}>
+                <Calendar className="h-4 w-4" /> Misafir Randevu
+              </Link>
+            )}
+
+            {/* Sadece Kayıtlı Müşteriler Görebilir */}
+            {isMusteri && (
+              <>
+                <Link to="/randevu-olustur" className={`${linkBaseClass} ${isActive('/randevu-olustur') ? activeClass : inactiveClass}`}>
+                  <Calendar className="h-4 w-4" /> Randevu Al
+                </Link>
+                <Link to="/randevularim" className={`${linkBaseClass} ${isActive('/randevularim') ? activeClass : inactiveClass}`}>
+                  <Calendar className="h-4 w-4" /> Randevularım
+                </Link>
+              </>
+            )}
+
+            {/* Sadece Personeller Görebilir */}
+            {isStaff && (
+              <Link to={panel} className={`${linkBaseClass} ${isActive(panel) ? activeClass : inactiveClass}`}>
+                <Shield className="h-4 w-4" /> Panel
+              </Link>
+            )}
+          </div>
+
+          {/* SAĞ: GİRİŞ / PROFİL BÖLÜMÜ (MASAÜSTÜ) */}
+          <div className="hidden md:flex items-center gap-2">
+            {(isMusteri || isStaff) ? (
+              <>
+                <Link to="/profil" className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-ink-100 hover:bg-ink-200 transition-colors cursor-pointer">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-brand-600 text-white text-xs font-semibold shadow-sm">
+                    {(user?.AdSoyad || user?.Rol || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-sm font-medium text-ink-700 max-w-[140px] truncate">
+                    {user?.AdSoyad || user?.Rol}
+                  </span>
+                </Link>
+                <button onClick={handleLogout} className="btn-ghost text-error-600 hover:bg-error-50 hover:text-error-700">
+                  <LogOut className="h-4 w-4" /> Çıkış
+                </button>
+              </>
+            ) : (
+              <>
+                <Link to="/giris" className="btn-ghost">
+                  <LogIn className="h-4 w-4" /> Giriş
+                </Link>
+                <Link to="/kayit" className="btn-primary">
+                  <User className="h-4 w-4" /> Kayıt Ol
+                </Link>
+              </>
+            )}
+          </div>
+
+          {/* MOBİL MENÜ BUTONU */}
+          <button
+            className="md:hidden p-2 rounded-lg text-ink-700 hover:bg-ink-100"
+            onClick={() => setMobileOpen((v) => !v)}
+          >
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
+
+        {/* MOBİL AÇILIR MENÜ */}
+        {mobileOpen && (
+          <div className="md:hidden pb-4 animate-fade-in">
+            <div className="flex flex-col gap-1">
+              <Link to="/" className={`${mobileLinkBaseClass} ${isActive('/') ? activeClass : inactiveClass}`}>
+                <LayoutGrid className="h-4 w-4" /> Ana Sayfa
+              </Link>
+              
+              <Link to="/hizmetler" className={`${mobileLinkBaseClass} ${isActive('/hizmetler') ? activeClass : inactiveClass}`}>
+                <Wrench className="h-4 w-4" /> Hizmetler
+              </Link>
+
+              {isGuest && (
+                <Link to="/randevu" className={`${mobileLinkBaseClass} ${isActive('/randevu') ? activeClass : inactiveClass}`}>
+                  <Calendar className="h-4 w-4" /> Misafir Randevu
+                </Link>
+              )}
+
+              {isMusteri && (
+                <>
+                  <Link to="/randevu-olustur" className={`${mobileLinkBaseClass} ${isActive('/randevu-olustur') ? activeClass : inactiveClass}`}>
+                    <Calendar className="h-4 w-4" /> knk ne alaka
+                  </Link>
+                  <Link to="/randevularim" className={`${mobileLinkBaseClass} ${isActive('/randevularim') ? activeClass : inactiveClass}`}>
+                    <Calendar className="h-4 w-4" /> Randevularım
+                  </Link>
+                </>
+              )}
+
+              {isStaff && (
+                <Link to={panel} className={`${mobileLinkBaseClass} ${isActive(panel) ? activeClass : inactiveClass}`}>
+                  <Shield className="h-4 w-4" /> Panel
+                </Link>
+              )}
+
+              <div className="mt-2 pt-2 border-t border-ink-200">
+                {(isMusteri || isStaff) ? (
+                  <>
+                    <Link to="/profil" className="w-full btn-ghost justify-start mb-1 text-ink-700">
+                      <User className="h-4 w-4" /> Profilim
+                    </Link>
+                    <button onClick={handleLogout} className="w-full btn-ghost justify-start text-error-600 hover:bg-error-50">
+                      <LogOut className="h-4 w-4" /> Çıkış Yap
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex gap-2 px-1">
+                    <Link to="/giris" className="flex-1 btn-secondary justify-center">Giriş</Link>
+                    <Link to="/kayit" className="flex-1 btn-primary justify-center">Kayıt Ol</Link>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </nav>
+    </header>
+  );
+}
+
+======================================= 
+DOSYA: ProtectedRoute.tsx 
+======================================= 
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { LoadingSpinner } from './Loading';
+
+export function ProtectedRoute({
+  children,
+  roles,
+}: {
+  children: React.ReactNode;
+  roles?: string[];
+}) {
+  const { isAuthenticated, loading, user } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <LoadingSpinner fullPage label="Oturum kontrol ediliyor..." />;
+  if (!isAuthenticated) {
+    return <Navigate to="/giris" replace state={{ from: location.pathname }} />;
+  }
+  if (roles && user?.Rol && !roles.includes(String(user.Rol))) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
+======================================= 
+DOSYA: StaffLayout.tsx 
+======================================= 
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import {
+  Wrench,
+  LogOut,
+  Shield,
+  Users,
+  Package,
+  Wallet,
+  CalendarClock,
+  LayoutDashboard,
+} from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+
+const NAV: { to: string; label: string; icon: typeof Shield; roles: string[] }[] = [
+  { to: '/panel', label: 'Yönetim', icon: LayoutDashboard, roles: ['SuperAdmin', 'Admin'] },
+  { to: '/usta', label: 'Usta Paneli', icon: Wrench, roles: ['SuperAdmin', 'Admin', 'Usta'] },
+  { to: '/vezne', label: 'Vezne', icon: Wallet, roles: ['SuperAdmin', 'Veznedar'] },
+  { to: '/depo', label: 'Depo', icon: Package, roles: ['SuperAdmin', 'Admin', 'DepoSorumlusu', 'Usta'] },
+];
+
+export function StaffLayout() {
+  const { user, logout, hasRole } = useAuth();
+  const navigate = useNavigate();
+  const links = NAV.filter((item) => hasRole(...item.roles));
+
+  return (
+    <div className="min-h-screen bg-ink-50 flex">
+      <aside className="hidden md:flex w-64 flex-col border-r border-ink-200 bg-ink-950 text-ink-200">
+        <div className="flex items-center gap-2 px-5 h-16 border-b border-white/10">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600">
+            <Shield className="h-4 w-4 text-white" />
+          </div>
+          <div>
+            <p className="font-display font-bold text-white text-sm">OtoServis</p>
+            <p className="text-[11px] text-ink-400">{user?.Rol}</p>
+          </div>
+        </div>
+        <nav className="flex-1 p-3 space-y-1">
+          {links.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                    isActive ? 'bg-brand-600 text-white' : 'hover:bg-white/10 text-ink-200'
+                  }`
+                }
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </NavLink>
+            );
+          })}
+          <NavLink
+            to="/"
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium hover:bg-white/10"
+          >
+            <Users className="h-4 w-4" />
+            Genel site
+          </NavLink>
+        </nav>
+        <button
+          className="m-3 flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm hover:bg-white/10"
+          onClick={async () => {
+            await logout();
+            navigate('/');
+          }}
+        >
+          <LogOut className="h-4 w-4" />
+          Çıkış
+        </button>
+      </aside>
+      <div className="flex-1 min-w-0">
+        <header className="md:hidden flex items-center justify-between h-14 px-4 border-b bg-white">
+          <span className="font-display font-bold">{user?.Rol}</span>
+          <div className="flex gap-2 overflow-x-auto">
+            {links.map((item) => (
+              <NavLink key={item.to} to={item.to} className="text-xs btn-ghost">
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+        </header>
+        <div className="p-4 sm:p-8">
+          <div className="mb-6 hidden md:flex items-center gap-2 text-ink-500 text-sm">
+            <CalendarClock className="h-4 w-4" />
+            Personel oturumu
+            <span className="ml-auto font-medium text-ink-800">#{user?.Id}</span>
+          </div>
+          <Outlet />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: States.tsx 
+======================================= 
+import { AlertCircle } from 'lucide-react';
+
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="card p-8 text-center">
+      <div className="flex items-center justify-center w-12 h-12 rounded-full bg-error-100 mx-auto mb-4">
+        <AlertCircle className="h-6 w-6 text-error-600" />
+      </div>
+      <h3 className="text-lg font-semibold text-ink-900 mb-1">Bir sorun oluştu</h3>
+      <p className="text-sm text-ink-500 mb-4">{message}</p>
+      {onRetry && (
+        <button onClick={onRetry} className="btn-secondary">
+          Tekrar Dene
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="card p-12 text-center">
+      <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-ink-100 mx-auto mb-4">
+        <Icon className="h-8 w-8 text-ink-400" />
+      </div>
+      <h3 className="text-lg font-semibold text-ink-900 mb-1">{title}</h3>
+      <p className="text-sm text-ink-500 max-w-sm mx-auto mb-4">{description}</p>
+      {action}
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: ToastProvider.tsx 
+======================================= 
+import { useCallback, useState } from 'react';
+import {
+  CheckCircle2,
+  XCircle,
+  Info,
+  AlertTriangle,
+  Sparkles,
+  X,
+  TrendingUp,
+  Clock,
+} from 'lucide-react';
+import { ToastContext, type Toast, type ToastType } from '@/contexts/ToastContext';
+import type { AiAnalysisMessage } from '@/types';
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const dismiss = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const show = useCallback((toast: Omit<Toast, 'id'>): string => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const duration = toast.duration ?? (toast.type === 'ai' ? 12000 : 5000);
+    const newToast: Toast = { ...toast, id, duration };
+    setToasts((prev) => [...prev, newToast]);
+    if (duration > 0) {
+      setTimeout(() => dismiss(id), duration);
+    }
+    return id;
+  }, [dismiss]);
+
+  const showSuccess = useCallback((title: string, message?: string) =>
+    show({ type: 'success', title, message }), [show]);
+
+  const showError = useCallback((title: string, message?: string) =>
+    show({ type: 'error', title, message }), [show]);
+
+  const showInfo = useCallback((title: string, message?: string) =>
+    show({ type: 'info', title, message }), [show]);
+
+  const showWarning = useCallback((title: string, message?: string) =>
+    show({ type: 'warning', title, message }), [show]);
+
+  const showAi = useCallback((data: AiAnalysisMessage) => {
+    const title = data.Baslik || 'Yapay Zeka Analiz Sonucu';
+    const message = data.Icerik || data.raw || '';
+    show({
+      type: 'ai',
+      title,
+      message,
+      aiData: data,
+      duration: 15000,
+    });
+  }, [show]);
+
+  return (
+    <ToastContext.Provider
+      value={{ toasts, show, dismiss, showSuccess, showError, showInfo, showWarning, showAi }}
+    >
+      {children}
+      <ToastViewport toasts={toasts} onDismiss={dismiss} />
+    </ToastContext.Provider>
+  );
+}
+
+function ToastViewport({
+  toasts,
+  onDismiss,
+}: {
+  toasts: Toast[];
+  onDismiss: (id: string) => void;
+}) {
+  return (
+    <div className="fixed bottom-4 right-4 z-[9999] flex max-w-sm flex-col gap-3 pointer-events-none">
+      {toasts.map((toast) => (
+        <ToastCard key={toast.id} toast={toast} onDismiss={() => onDismiss(toast.id)} />
+      ))}
+    </div>
+  );
+}
+
+function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
+  const [exiting, setExiting] = useState(false);
+
+  const handleClose = () => {
+    setExiting(true);
+    setTimeout(onDismiss, 300);
+  };
+
+  if (toast.type === 'ai') {
+    return <AiToastCard toast={toast} onDismiss={handleClose} exiting={exiting} />;
+  }
+
+  const config: Record<ToastType, { icon: typeof Info; bg: string; border: string; iconColor: string }> = {
+    success: { icon: CheckCircle2, bg: 'bg-white', border: 'border-l-4 border-l-success-500', iconColor: 'text-success-500' },
+    error: { icon: XCircle, bg: 'bg-white', border: 'border-l-4 border-l-error-500', iconColor: 'text-error-500' },
+    info: { icon: Info, bg: 'bg-white', border: 'border-l-4 border-l-brand-500', iconColor: 'text-brand-500' },
+    warning: { icon: AlertTriangle, bg: 'bg-white', border: 'border-l-4 border-l-warning-500', iconColor: 'text-warning-500' },
+    ai: { icon: Sparkles, bg: 'bg-white', border: 'border-l-4 border-l-accent-500', iconColor: 'text-accent-500' },
+  };
+
+  const { icon: Icon, bg, border, iconColor } = config[toast.type];
+
+  return (
+    <div
+      className={`pointer-events-auto ${bg} ${border} rounded-xl shadow-xl shadow-ink-900/10 p-4 w-80 animate-slide-in-right ${
+        exiting ? 'animate-slide-out-right' : ''
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <Icon className={`h-5 w-5 flex-shrink-0 ${iconColor} mt-0.5`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-ink-900">{toast.title}</p>
+          {toast.message && (
+            <p className="mt-0.5 text-sm text-ink-600 break-words">{toast.message}</p>
+          )}
+        </div>
+        <button
+          onClick={handleClose}
+          className="flex-shrink-0 text-ink-400 hover:text-ink-700 transition-colors"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AiToastCard({
+  toast,
+  onDismiss,
+  exiting,
+}: {
+  toast: Toast;
+  onDismiss: () => void;
+  exiting: boolean;
+}) {
+  const data = toast.aiData;
+  const formattedCost = null;
+  const confidence = null;
+  const time = null;
+
+  return (
+    <div
+      className={`pointer-events-auto w-96 rounded-xl bg-gradient-to-br from-white to-brand-50/50 border border-brand-200/60 shadow-2xl shadow-brand-900/15 p-5 animate-slide-in-right ${
+        exiting ? 'animate-slide-out-right' : ''
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <div className="absolute inset-0 bg-accent-400 rounded-full animate-pulse-ring" />
+            <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700">
+              <Sparkles className="h-4 w-4 text-white" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-brand-600 uppercase tracking-wide">Yapay Zeka Analizi</p>
+            {time && <p className="text-xs text-ink-400">{time}</p>}
+          </div>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="text-ink-400 hover:text-ink-700 transition-colors"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Title */}
+      <h4 className="text-sm font-bold text-ink-900 mb-1">{toast.title}</h4>
+      {toast.message && (
+        <p className="text-sm text-ink-600 mb-3 break-words leading-relaxed">{toast.message}</p>
+      )}
+
+      {/* AI Data */}
+      <div className="space-y-2">
+        {formattedCost != null && (
+          <div className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 border border-brand-100">
+            <TrendingUp className="h-4 w-4 text-success-600" />
+            <span className="text-xs text-ink-500">Tahmini Maliyet</span>
+            <span className="ml-auto text-sm font-bold text-ink-900">{formattedCost}</span>
+          </div>
+        )}
+
+        {confidence != null && (
+          <div className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 border border-brand-100">
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-ink-500">Güven Skoru</span>
+                <span className="text-xs font-semibold text-brand-600">%{confidence}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-ink-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-brand-500 to-success-500 transition-all duration-700"
+                  style={{ width: `${confidence}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {data?.RandevuId != null && (
+          <div className="flex items-center gap-1.5 text-xs text-ink-400">
+            <Clock className="h-3 w-3" />
+            <span>Randevu #{data.RandevuId} için analiz edildi</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: AuthContext.ts 
+======================================= 
+import { createContext, useContext } from 'react';
+import type { Kullanici, LoginDto, RegisterDto } from '@/types';
+
+export interface AuthContextValue {
+  user: Kullanici | null;
+  loading: boolean;
+  login: (dto: LoginDto) => Promise<Kullanici>;
+  register: (dto: RegisterDto) => Promise<void>;
+  logout: () => Promise<void>;
+  isAuthenticated: boolean;
+  hasRole: (...roles: string[]) => boolean;
+}
+
+export const AuthContext = createContext<AuthContextValue | null>(null);
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+}
+
+======================================= 
+DOSYA: ToastContext.ts 
+======================================= 
+import { createContext, useContext } from 'react';
+import type { AiAnalysisMessage } from '@/types';
+
+export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'ai';
+
+export interface Toast {
+  id: string;
+  type: ToastType;
+  title: string;
+  message?: string;
+  duration?: number;
+  aiData?: AiAnalysisMessage;
+}
+
+export interface ToastContextValue {
+  toasts: Toast[];
+  show: (toast: Omit<Toast, 'id'>) => string;
+  dismiss: (id: string) => void;
+  showSuccess: (title: string, message?: string) => void;
+  showError: (title: string, message?: string) => void;
+  showInfo: (title: string, message?: string) => void;
+  showWarning: (title: string, message?: string) => void;
+  showAi: (data: AiAnalysisMessage) => void;
+}
+
+export const ToastContext = createContext<ToastContextValue | null>(null);
+
+export function useToast(): ToastContextValue {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast must be used within ToastProvider');
+  return ctx;
+}
+
+======================================= 
+DOSYA: AppProviders.tsx 
+======================================= 
+import { useEffect, useRef } from 'react';
+import { ToastProvider } from '@/components/ToastProvider';
+import { useToast } from '@/contexts/ToastContext';
+import { signalR } from '@/services/signalr';
+
+function SignalRBridge() {
+  const { showAi } = useToast();
+  const showAiRef = useRef(showAi);
+  showAiRef.current = showAi;
+
+  useEffect(() => {
+    const unsub = signalR.onTehis((mesaj) => {
+      showAiRef.current({ Icerik: mesaj, Baslik: 'Yapay zeka analizi', raw: mesaj });
+    });
+    signalR.connect().catch(() => undefined);
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  return null;
+}
+
+export function AppProviders({ children }: { children: React.ReactNode }) {
+  return (
+    <ToastProvider>
+      <SignalRBridge />
+      {children}
+    </ToastProvider>
+  );
+}
+
+======================================= 
+DOSYA: AuthProvider.tsx 
+======================================= 
+import { useCallback, useEffect, useState } from 'react';
+import { AuthContext, type AuthContextValue } from './AuthContext';
+import { authApi, clearAuth, getStoredUser } from '@/services/api';
+import { pickToken } from '@/lib/json';
+import { userFromToken } from '@/lib/jwt';
+import type { Kullanici, LoginDto, RegisterDto } from '@/types';
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<Kullanici | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = sessionStorage.getItem('token');
+    const stored = getStoredUser() as Kullanici | null;
+    if (token) {
+      const fromJwt = userFromToken(token, stored ?? undefined);
+      setUser(fromJwt ?? stored);
+    }
+    setLoading(false);
+  }, []);
+
+  const login = useCallback(async (dto: LoginDto) => {
+    const res = await authApi.login(dto);
+    const token = pickToken(res.data);
+    if (!token) {
+      throw new Error('Sunucudan token alınamadı.');
+    }
+    const session = userFromToken(token, { Email: dto.Email });
+    if (!session) throw new Error('Token çözümlenemedi.');
+    sessionStorage.setItem('token', token);
+    sessionStorage.setItem('user', JSON.stringify(session));
+    setUser(session);
+    return session;
+  }, []);
+
+  const register = useCallback(async (dto: RegisterDto) => {
+    await authApi.register(dto);
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      /* token zaten geçersiz olabilir */
+    }
+    clearAuth();
+    setUser(null);
+  }, []);
+
+  const hasRole = useCallback(
+    (...roles: string[]) => Boolean(user?.Rol && roles.includes(String(user.Rol))),
+    [user],
+  );
+
+  const value: AuthContextValue = {
+    user,
+    loading,
+    login,
+    register,
+    logout,
+    isAuthenticated: user !== null,
+    hasRole,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+======================================= 
+DOSYA: useSignalR.ts 
+======================================= 
+import { useEffect, useState } from 'react';
+import { signalR } from '@/services/signalr';
+
+export function useSignalR() {
+  const [connectionId, setConnectionId] = useState<string | null>(signalR.connectionId);
+  const [aiMesaji, setAiMesaji] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const offMsg = signalR.onTehis((mesaj) => setAiMesaji(mesaj));
+    const offStatus = signalR.onStatus((ok) => {
+      setConnected(ok);
+      setConnectionId(signalR.connectionId);
+    });
+
+    signalR
+      .connect()
+      .then(() => {
+        setConnectionId(signalR.connectionId);
+        setConnected(true);
+      })
+      .catch(() => setConnected(false));
+
+    return () => {
+      offMsg();
+      offStatus();
+    };
+  }, []);
+
+  return { connectionId, aiMesaji, setAiMesaji, connected };
+}
+
+======================================= 
+DOSYA: json.ts 
+======================================= 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function toPascalKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toPascalKeys);
+  if (!isPlainObject(value)) return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    const pascal = key.length ? key.charAt(0).toUpperCase() + key.slice(1) : key;
+    out[pascal] = toPascalKeys(nested);
+  }
+  return out;
+}
+
+export function apiMessage(data: unknown, fallback: string): string {
+  if (typeof data === 'string' && data.trim()) return data;
+  if (!isPlainObject(data)) return fallback;
+  const mesaj = data.Mesaj ?? data.Hata ?? data.DetayliHata ?? data.message ?? data.title;
+  if (typeof mesaj === 'string' && mesaj.trim()) return mesaj;
+  if (typeof data.errors === 'object' && data.errors) {
+    const first = Object.values(data.errors as Record<string, unknown>)[0];
+    if (Array.isArray(first) && typeof first[0] === 'string') return first[0];
+  }
+  return fallback;
+}
+
+export function pickToken(data: unknown): string | null {
+  if (!isPlainObject(data)) return null;
+  const token = data.Token ?? data.token;
+  return typeof token === 'string' && token.length > 0 ? token : null;
+}
+
+======================================= 
+DOSYA: jwt.ts 
+======================================= 
+import type { Kullanici, Role } from '@/types';
+
+const ROLE_CLAIM = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/role';
+const NAME_ID_CLAIM = 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier';
+
+export function decodeJwt(token: string): Record<string, unknown> | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+export function userFromToken(token: string, extras?: Partial<Kullanici>): Kullanici | null {
+  const decoded = decodeJwt(token);
+  if (!decoded) return null;
+
+  const idRaw = decoded[NAME_ID_CLAIM] ?? decoded.sub ?? decoded.nameid;
+  const rolRaw = decoded[ROLE_CLAIM] ?? decoded.role ?? decoded.Rol;
+  const Id = Number(idRaw);
+  if (!Id || !rolRaw) return null;
+
+  return {
+    Id,
+    Rol: String(rolRaw) as Role,
+    AdSoyad: extras?.AdSoyad ?? null,
+    Email: extras?.Email ?? null,
+    Telefon: extras?.Telefon ?? null,
+  };
+}
+
+export function dashboardPath(rol?: string | null): string {
+  switch (rol) {
+    case 'SuperAdmin':
+    case 'Admin':
+      return '/panel';
+    case 'Usta':
+      return '/usta';
+    case 'Veznedar':
+      return '/vezne';
+    case 'DepoSorumlusu':
+      return '/depo';
+    case 'Musteri':
+      return '/randevularim';
+    default:
+      return '/';
+  }
+}
+
+======================================= 
+DOSYA: AdminPanelPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { adminApi, hizmetApi, istasyonApi, randevuApi, ustaApi } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { PERSONEL_ROLLER, type HizmetTipi, type PersonelEkleDto } from '@/types';
+
+export function AdminPanelPage() {
+  const { hasRole } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const isSuper = hasRole('SuperAdmin');
+
+  const [adminForm, setAdminForm] = useState<PersonelEkleDto>({
+    AdSoyad: '',
+    Email: '',
+    Telefon: '',
+    Sifre: '',
+    Rol: 'Admin',
+  });
+  const [personelForm, setPersonelForm] = useState<PersonelEkleDto>({
+    AdSoyad: '',
+    Email: '',
+    Telefon: '',
+    Sifre: '',
+    Rol: 'Usta',
+  });
+  const [hizmet, setHizmet] = useState({
+    Ad: '',
+    Fiyat: 0,
+    UstaSureDakika: 30,
+    LiftSureDakika: 20,
+    GerekenUzmanlik: '',
+  });
+  const [istasyon, setIstasyon] = useState({ Ad: '', MusaitMi: true });
+  const [usta, setUsta] = useState({ AdSoyad: '', UzmanlikAlani: '' });
+  const [hizmetler, setHizmetler] = useState<HizmetTipi[]>([]);
+  const [randevuId, setRandevuId] = useState('');
+  const [ekSure, setEkSure] = useState({ EkSureDakika: 15, Sebep: '' });
+
+  useEffect(() => {
+    hizmetApi.listele().then(setHizmetler).catch(() => undefined);
+  }, []);
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      const res = await fn();
+      const mesaj = (res as { data?: { Mesaj?: string } })?.data?.Mesaj;
+      showSuccess(ok, mesaj);
+    } catch (error: unknown) {
+      showError('İşlem başarısız', error instanceof Error ? error.message : '');
+    }
+  };
+
+  return (
+    <div className="space-y-8 max-w-5xl">
+      <div>
+        <h1 className="text-2xl font-bold">Yönetim paneli</h1>
+        <p className="text-sm text-ink-500">SuperAdmin ve Admin uçları. Form alanları DTO ile aynı isimdedir.</p>
+      </div>
+
+      {isSuper && (
+        <section className="card p-6">
+          <h2 className="font-semibold mb-4">Admin ekle (PersonelEkleDto → /Admin/admin-ekle)</h2>
+          <form
+            className="grid sm:grid-cols-2 gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(() => adminApi.adminEkle({ ...adminForm, Rol: 'Admin' }), 'Admin eklendi');
+            }}
+          >
+            {(['AdSoyad', 'Email', 'Telefon', 'Sifre'] as const).map((name) => (
+              <div key={name}>
+                <label className="label-text">{name}</label>
+                <input
+                  name={name}
+                  type={name === 'Sifre' ? 'password' : name === 'Email' ? 'email' : 'text'}
+                  className="input-field"
+                  value={adminForm[name] ?? ''}
+                  onChange={(e) => setAdminForm({ ...adminForm, [name]: e.target.value })}
+                  required={name !== 'Telefon'}
+                  minLength={name === 'Sifre' ? 6 : undefined}
+                />
+              </div>
+            ))}
+            <input type="hidden" name="Rol" value="Admin" />
+            <button className="btn-primary sm:col-span-2" type="submit">
+              Admin oluştur
+            </button>
+          </form>
+        </section>
+      )}
+
+      <section className="card p-6">
+        <h2 className="font-semibold mb-4">Personel ekle (Usta / Veznedar / DepoSorumlusu)</h2>
+        <form
+          className="grid sm:grid-cols-2 gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => adminApi.personelEkle(personelForm), 'Personel eklendi');
+          }}
+        >
+          {(['AdSoyad', 'Email', 'Telefon', 'Sifre'] as const).map((name) => (
+            <div key={name}>
+              <label className="label-text">{name}</label>
+              <input
+                name={name}
+                type={name === 'Sifre' ? 'password' : name === 'Email' ? 'email' : 'text'}
+                className="input-field"
+                value={personelForm[name] ?? ''}
+                onChange={(e) => setPersonelForm({ ...personelForm, [name]: e.target.value })}
+                required={name !== 'Telefon'}
+                minLength={name === 'Sifre' ? 6 : undefined}
+              />
+            </div>
+          ))}
+          <div className="sm:col-span-2">
+            <label className="label-text">Rol</label>
+            <select
+              name="Rol"
+              className="input-field"
+              value={personelForm.Rol}
+              onChange={(e) => setPersonelForm({ ...personelForm, Rol: e.target.value })}
+            >
+              {PERSONEL_ROLLER.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button className="btn-primary sm:col-span-2" type="submit">
+            Personel oluştur
+          </button>
+        </form>
+      </section>
+
+      <section className="card p-6">
+        <h2 className="font-semibold mb-4">Hizmet tipi ekle</h2>
+        <form
+          className="grid sm:grid-cols-2 gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => hizmetApi.ekle(hizmet), 'Hizmet eklendi');
+          }}
+        >
+          <div>
+            <label className="label-text">Ad</label>
+            <input name="Ad" className="input-field" value={hizmet.Ad} onChange={(e) => setHizmet({ ...hizmet, Ad: e.target.value })} required />
+          </div>
+          <div>
+            <label className="label-text">Fiyat</label>
+            <input name="Fiyat" type="number" className="input-field" value={hizmet.Fiyat} onChange={(e) => setHizmet({ ...hizmet, Fiyat: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label-text">UstaSureDakika</label>
+            <input name="UstaSureDakika" type="number" className="input-field" value={hizmet.UstaSureDakika} onChange={(e) => setHizmet({ ...hizmet, UstaSureDakika: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label-text">LiftSureDakika</label>
+            <input name="LiftSureDakika" type="number" className="input-field" value={hizmet.LiftSureDakika} onChange={(e) => setHizmet({ ...hizmet, LiftSureDakika: Number(e.target.value) })} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label-text">GerekenUzmanlik</label>
+            <input name="GerekenUzmanlik" className="input-field" value={hizmet.GerekenUzmanlik} onChange={(e) => setHizmet({ ...hizmet, GerekenUzmanlik: e.target.value })} />
+          </div>
+          <button className="btn-primary sm:col-span-2" type="submit">Kaydet</button>
+        </form>
+        <p className="text-xs text-ink-400 mt-3">{hizmetler.length} hizmet kayıtlı.</p>
+      </section>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        <section className="card p-6">
+          <h2 className="font-semibold mb-4">İstasyon ekle</h2>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(() => istasyonApi.ekle(istasyon), 'İstasyon eklendi');
+            }}
+          >
+            <div>
+              <label className="label-text">Ad</label>
+              <input name="Ad" className="input-field" value={istasyon.Ad} onChange={(e) => setIstasyon({ ...istasyon, Ad: e.target.value })} required />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="MusaitMi" checked={istasyon.MusaitMi} onChange={(e) => setIstasyon({ ...istasyon, MusaitMi: e.target.checked })} />
+              MusaitMi
+            </label>
+            <button className="btn-primary w-full" type="submit">Kaydet</button>
+          </form>
+        </section>
+        <section className="card p-6">
+          <h2 className="font-semibold mb-4">Usta ekle</h2>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(() => ustaApi.ekle(usta), 'Usta eklendi');
+            }}
+          >
+            <div>
+              <label className="label-text">AdSoyad</label>
+              <input name="AdSoyad" className="input-field" value={usta.AdSoyad} onChange={(e) => setUsta({ ...usta, AdSoyad: e.target.value })} required />
+            </div>
+            <div>
+              <label className="label-text">UzmanlikAlani</label>
+              <input name="UzmanlikAlani" className="input-field" value={usta.UzmanlikAlani} onChange={(e) => setUsta({ ...usta, UzmanlikAlani: e.target.value })} required />
+            </div>
+            <button className="btn-primary w-full" type="submit">Kaydet</button>
+          </form>
+        </section>
+      </div>
+
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold">Randevu işlemleri (id ile)</h2>
+        <p className="text-xs text-ink-500">Backend’de tüm randevuları listeleyen GET yok; işlemler randevu numarası ile yapılır.</p>
+        <input className="input-field" placeholder="Randevu Id" value={randevuId} onChange={(e) => setRandevuId(e.target.value)} />
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-secondary" type="button" onClick={() => run(() => randevuApi.baslat(Number(randevuId)), 'Başlatıldı')}>
+            Başlat
+          </button>
+          <button className="btn-secondary" type="button" onClick={() => run(() => randevuApi.iptal(Number(randevuId)), 'İptal edildi')}>
+            İptal
+          </button>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label-text">EkSureDakika</label>
+            <input name="EkSureDakika" type="number" className="input-field" value={ekSure.EkSureDakika} onChange={(e) => setEkSure({ ...ekSure, EkSureDakika: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label-text">Sebep</label>
+            <input name="Sebep" className="input-field" value={ekSure.Sebep} onChange={(e) => setEkSure({ ...ekSure, Sebep: e.target.value })} />
+          </div>
+        </div>
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={() => run(() => randevuApi.sureUzat(Number(randevuId), ekSure), 'Süre uzatıldı')}
+        >
+          Süre uzat
+        </button>
+      </section>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: CustomerAppointmentPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { Sparkles, CalendarDays, Clock, Car, Info } from 'lucide-react';
+import { randevuApi } from '@/services/api';
+import { useSignalR } from '@/hooks/useSignalR';
+import { useToast } from '@/contexts/ToastContext';
+import type { KayitliRandevuTalebiDto } from '@/types';
+
+export function CustomerAppointmentPage() {
+  const { connectionId, aiMesaji } = useSignalR();
+  const { showSuccess, showError } = useToast();
+  const [yeniArac, setYeniArac] = useState(false);
+  const [loading, setLoading] = useState(false);
+  
+  // Tarih ve saati ayrı tutarak daha iyi bir UX sunuyoruz
+  const [seciliTarih, setSeciliTarih] = useState('');
+  const [seciliSaat, setSeciliSaat] = useState('');
+
+  const [form, setForm] = useState<KayitliRandevuTalebiDto>({
+    AracPlaka: '',
+    AracMarkaModel: null,
+    AracUretimYili: null,
+    Tarih: '',
+    MusteriNotu: '',
+    SignalRConnectionId: '',
+  });
+
+  useEffect(() => {
+    if (connectionId) setForm((f) => ({ ...f, SignalRConnectionId: connectionId }));
+  }, [connectionId]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!seciliTarih || !seciliSaat) {
+      showError('Eksik Bilgi', 'Lütfen randevu tarihi ve saatini seçiniz.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Tarih ve saati birleştirip ISO formatına çeviriyoruz
+      const birlesikTarih = new Date(`${seciliTarih}T${seciliSaat}`).toISOString();
+
+      const payload: KayitliRandevuTalebiDto = {
+        AracPlaka: form.AracPlaka,
+        AracMarkaModel: yeniArac ? form.AracMarkaModel : null,
+        AracUretimYili: yeniArac ? form.AracUretimYili : null,
+        Tarih: birlesikTarih,
+        MusteriNotu: form.MusteriNotu,
+        SignalRConnectionId: connectionId || form.SignalRConnectionId,
+      };
+      
+      await randevuApi.kayitliMusteri(payload);
+      showSuccess('Randevu Talebiniz Alındı', 'Sistem kayıtlarınızı işliyor.');
+    } catch (error: unknown) {
+      showError('İşlem Başarısız', error instanceof Error ? error.message : 'Tarih seçiminizi kontrol edip tekrar deneyin.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-12">
+      <div className="mb-8 text-center">
+        <h1 className="text-3xl font-bold text-ink-900 mb-2">Servis Randevusu Oluştur</h1>
+        <p className="text-sm text-ink-500">Aracınızın şikayetini yazın, gerisini uzmanlarımıza bırakın.</p>
+      </div>
+      
+      {aiMesaji && (
+        <div className="mb-6 rounded-2xl border border-accent-200 bg-accent-50 p-4 flex gap-3 shadow-sm animate-in fade-in slide-in-from-bottom-4">
+          <Sparkles className="h-6 w-6 text-accent-600 shrink-0" />
+          <div className="flex-1">
+            <h3 className="text-sm font-semibold text-accent-900 mb-1">Yapay Zeka Analizi</h3>
+            <p className="text-sm text-accent-800 leading-relaxed">{aiMesaji}</p>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="card p-6 sm:p-8 space-y-8">
+        
+        {/* Araç Bilgileri */}
+        <div>
+          <label className="label-text">Araç Plakası</label>
+          <div className="relative mt-1">
+            <Car className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-ink-400" />
+            <input
+              name="AracPlaka"
+              className="input-field pl-10 uppercase font-medium tracking-wide"
+              value={form.AracPlaka}
+              onChange={(e) => setForm({ ...form, AracPlaka: e.target.value.toUpperCase() })}
+              placeholder="Örn: 34 ABC 123"
+              required
+            />
+          </div>
+        </div>
+
+        <div className="bg-ink-50/50 p-4 rounded-xl border border-ink-100 transition-all">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input 
+              type="checkbox" 
+              className="w-4 h-4 rounded text-brand-600 border-ink-300 focus:ring-brand-500"
+              checked={yeniArac} 
+              onChange={(e) => setYeniArac(e.target.checked)} 
+            />
+            <span className="text-sm font-medium text-ink-700">Farklı / Yeni bir araçla geliyorum</span>
+          </label>
+          
+          {yeniArac && (
+            <div className="mt-5 grid sm:grid-cols-2 gap-4 border-t border-ink-200 pt-5 animate-in fade-in">
+              <div>
+                <label className="label-text">Marka ve Model</label>
+                <input
+                  name="AracMarkaModel"
+                  className="input-field mt-1"
+                  value={form.AracMarkaModel ?? ''}
+                  onChange={(e) => setForm({ ...form, AracMarkaModel: e.target.value })}
+                  placeholder="Örn: Volkswagen Golf"
+                  required={yeniArac}
+                />
+              </div>
+              <div>
+                <label className="label-text">Üretim Yılı</label>
+                <input
+                  name="AracUretimYili"
+                  type="number"
+                  min="1990"
+                  max={new Date().getFullYear() + 1}
+                  className="input-field mt-1"
+                  value={form.AracUretimYili ?? ''}
+                  onChange={(e) => setForm({ ...form, AracUretimYili: e.target.value ? Number(e.target.value) : null })}
+                  placeholder="Örn: 2020"
+                  required={yeniArac}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modern Tarih ve Saat Seçici */}
+        <div>
+          <h3 className="text-sm font-medium text-ink-900 mb-3">Randevu Zamanı</h3>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="relative group">
+              <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-brand-500 group-focus-within:text-brand-600 transition-colors" />
+              <input
+                type="date"
+                min={new Date().toISOString().split('T')[0]}
+                className="input-field pl-10 h-12 cursor-pointer"
+                value={seciliTarih}
+                onChange={(e) => setSeciliTarih(e.target.value)}
+                required
+              />
+            </div>
+            <div className="relative group">
+              <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-brand-500 group-focus-within:text-brand-600 transition-colors" />
+              <input
+                type="time"
+                className="input-field pl-10 h-12 cursor-pointer"
+                value={seciliSaat}
+                onChange={(e) => setSeciliSaat(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <label className="label-text mb-0">Arıza Şikayetiniz / Müşteri Notu</label>
+            <div className="group relative cursor-help">
+              <Info className="h-4 w-4 text-ink-400" />
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden w-64 rounded bg-ink-900 px-3 py-2 text-xs text-white group-hover:block">
+                Yapay zeka asistanımız yazdıklarınızı analiz edip ön hazırlık yapar.
+              </div>
+            </div>
+          </div>
+          <textarea
+            name="MusteriNotu"
+            className="input-field min-h-[120px] resize-none leading-relaxed"
+            value={form.MusteriNotu}
+            onChange={(e) => setForm({ ...form, MusteriNotu: e.target.value })}
+            placeholder="Aracınızdaki sorunu (ses, titreme, arıza lambası vb.) detaylıca anlatabilirsiniz..."
+            required
+          />
+        </div>
+
+        <button type="submit" disabled={loading} className="btn-primary w-full text-lg py-3.5 shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40">
+          {loading ? 'İşleniyor...' : 'Randevuyu Onayla'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: DepoPanelPage.tsx 
+======================================= 
+import { useCallback, useEffect, useState } from 'react';
+import { parcaApi } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import type { YedekParca } from '@/types';
+
+const empty: Omit<YedekParca, 'Id'> = {
+  ParcaAdi: '',
+  BirimFiyat: 0,
+  StokMiktari: 0,
+  KritikStokSeviyesi: 5,
+  UyumluHizmetTipiId: 1,
+};
+
+export function DepoPanelPage() {
+  const { hasRole } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const canWrite = hasRole('SuperAdmin', 'Admin', 'DepoSorumlusu');
+  const canDelete = hasRole('SuperAdmin', 'Admin');
+  const [stoklar, setStoklar] = useState<YedekParca[]>([]);
+  const [kritik, setKritik] = useState<YedekParca[] | string>([]);
+  const [form, setForm] = useState(empty);
+  const [edit, setEdit] = useState<YedekParca | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStoklar(await parcaApi.tumStoklar());
+      const k = await parcaApi.kritikStoklar();
+      setKritik(Array.isArray(k) ? k : (k as { Mesaj?: string }).Mesaj || []);
+    } catch (error: unknown) {
+      showError('Stoklar alınamadı', error instanceof Error ? error.message : '');
+    }
+  }, [showError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      await fn();
+      showSuccess(ok);
+      setForm(empty);
+      setEdit(null);
+      load();
+    } catch (error: unknown) {
+      showError('İşlem başarısız', error instanceof Error ? error.message : '');
+    }
+  };
+
+  return (
+    <div className="space-y-8 max-w-5xl">
+      <div>
+        <h1 className="text-2xl font-bold">Depo</h1>
+        <p className="text-sm text-ink-500">YedekParca alanları: ParcaAdi, BirimFiyat, StokMiktari, KritikStokSeviyesi, UyumluHizmetTipiId</p>
+      </div>
+
+      <section className="card p-6">
+        <h2 className="font-semibold mb-3">Kritik stoklar</h2>
+        {typeof kritik === 'string' ? (
+          <p className="text-sm text-success-700">{kritik}</p>
+        ) : (
+          <ul className="text-sm space-y-1">
+            {kritik.map((p) => (
+              <li key={p.Id} className="text-error-700">
+                {p.ParcaAdi} — stok {p.StokMiktari} / kritik {p.KritikStokSeviyesi}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {canWrite && (
+        <section className="card p-6">
+          <h2 className="font-semibold mb-4">{edit ? `Güncelle #${edit.Id}` : 'Yeni parça'}</h2>
+          <form
+            className="grid sm:grid-cols-2 gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (edit) {
+                run(() => parcaApi.guncelle(edit.Id, { ...edit, ...form, Id: edit.Id }), 'Güncellendi');
+              } else {
+                run(() => parcaApi.ekle(form), 'Eklendi');
+              }
+            }}
+          >
+            {(['ParcaAdi'] as const).map((name) => (
+              <div key={name} className="sm:col-span-2">
+                <label className="label-text">{name}</label>
+                <input name={name} className="input-field" value={form[name] ?? ''} onChange={(e) => setForm({ ...form, [name]: e.target.value })} required />
+              </div>
+            ))}
+            <div>
+              <label className="label-text">BirimFiyat</label>
+              <input name="BirimFiyat" type="number" className="input-field" value={form.BirimFiyat} onChange={(e) => setForm({ ...form, BirimFiyat: Number(e.target.value) })} />
+            </div>
+            <div>
+              <label className="label-text">StokMiktari</label>
+              <input name="StokMiktari" type="number" className="input-field" value={form.StokMiktari} onChange={(e) => setForm({ ...form, StokMiktari: Number(e.target.value) })} />
+            </div>
+            <div>
+              <label className="label-text">KritikStokSeviyesi</label>
+              <input name="KritikStokSeviyesi" type="number" className="input-field" value={form.KritikStokSeviyesi} onChange={(e) => setForm({ ...form, KritikStokSeviyesi: Number(e.target.value) })} />
+            </div>
+            <div>
+              <label className="label-text">UyumluHizmetTipiId</label>
+              <input name="UyumluHizmetTipiId" type="number" className="input-field" value={form.UyumluHizmetTipiId} onChange={(e) => setForm({ ...form, UyumluHizmetTipiId: Number(e.target.value) })} />
+            </div>
+            <div className="sm:col-span-2 flex gap-2">
+              <button className="btn-primary" type="submit">
+                {edit ? 'Güncelle' : 'Ekle'}
+              </button>
+              {edit && (
+                <button className="btn-secondary" type="button" onClick={() => { setEdit(null); setForm(empty); }}>
+                  Vazgeç
+                </button>
+              )}
+            </div>
+          </form>
+        </section>
+      )}
+
+      <section className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-ink-50 text-left">
+            <tr>
+              <th className="p-3">Id</th>
+              <th className="p-3">ParcaAdi</th>
+              <th className="p-3">BirimFiyat</th>
+              <th className="p-3">StokMiktari</th>
+              <th className="p-3">KritikStokSeviyesi</th>
+              <th className="p-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {stoklar.map((p) => (
+              <tr key={p.Id} className="border-t border-ink-100">
+                <td className="p-3">{p.Id}</td>
+                <td className="p-3">{p.ParcaAdi}</td>
+                <td className="p-3">{p.BirimFiyat}</td>
+                <td className="p-3">{p.StokMiktari}</td>
+                <td className="p-3">{p.KritikStokSeviyesi}</td>
+                <td className="p-3 text-right space-x-2">
+                  {canWrite && (
+                    <button
+                      className="btn-ghost"
+                      type="button"
+                      onClick={() => {
+                        setEdit(p);
+                        setForm({
+                          ParcaAdi: p.ParcaAdi ?? '',
+                          BirimFiyat: p.BirimFiyat,
+                          StokMiktari: p.StokMiktari,
+                          KritikStokSeviyesi: p.KritikStokSeviyesi,
+                          UyumluHizmetTipiId: p.UyumluHizmetTipiId,
+                        });
+                      }}
+                    >
+                      Düzenle
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button className="btn-ghost text-error-600" type="button" onClick={() => run(() => parcaApi.sil(p.Id), 'Silindi')}>
+                      Sil
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: ForgotPasswordPage.tsx 
+======================================= 
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Mail } from 'lucide-react';
+import { authApi } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
+import type { SifremiUnuttumDto } from '@/types';
+
+export function ForgotPasswordPage() {
+  const { showSuccess, showError } = useToast();
+  const [form, setForm] = useState<SifremiUnuttumDto>({ Email: '' });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await authApi.sifremiUnuttum(form);
+      showSuccess('Bağlantı gönderildi', (res.data as { Mesaj?: string })?.Mesaj || 'E-postanızı kontrol edin.');
+    } catch (error: unknown) {
+      showError('İşlem başarısız', error instanceof Error ? error.message : 'Tekrar deneyin.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-md px-4 py-16">
+      <h1 className="text-2xl font-bold mb-6 text-center">Şifremi Unuttum</h1>
+      
+      <form onSubmit={handleSubmit} className="card p-6 space-y-4">
+        <div>
+          <label className="label-text">Kayıtlı Email Adresiniz</label>
+          <div className="relative mt-1">
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+            <input
+              name="Email"
+              type="email"
+              className="input-field pl-10"
+              value={form.Email}
+              onChange={(e) => setForm({ Email: e.target.value })}
+              placeholder="ornek@email.com"
+              required
+            />
+          </div>
+        </div>
+        <button type="submit" disabled={loading} className="btn-primary w-full">
+          {loading ? 'Gönderiliyor...' : 'Sıfırlama Bağlantısı Gönder'}
+        </button>
+        
+        <Link to="/giris" className="block text-center text-sm text-ink-500 hover:text-brand-600 mt-4">
+          Giriş ekranına dön
+        </Link>
+      </form>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: GuestAppointmentPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { Sparkles, ArrowRight } from 'lucide-react';
+import { hizmetApi, randevuApi } from '@/services/api';
+import { useSignalR } from '@/hooks/useSignalR';
+import { useToast } from '@/contexts/ToastContext';
+import type { HizmetTipi, RandevuOlusturDto } from '@/types';
+
+export function GuestAppointmentPage() {
+  const { connectionId, aiMesaji } = useSignalR();
+  const { showSuccess, showError } = useToast();
+  const [hizmetler, setHizmetler] = useState<HizmetTipi[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState<RandevuOlusturDto>({
+    MusteriAdSoyad: '',
+    MusteriTelefon: '',
+    Email: '',
+    AracPlaka: '',
+    AracMarkaModel: '',
+    AracUretimYili: new Date().getFullYear(),
+    HizmetTipiId: 1,
+    Tarih: '',
+    MusteriNotu: '',
+    SignalRConnectionId: '',
+  });
+
+  useEffect(() => {
+    hizmetApi.listele().then(setHizmetler).catch(() => setHizmetler([]));
+  }, []);
+
+  useEffect(() => {
+    if (connectionId) setForm((f) => ({ ...f, SignalRConnectionId: connectionId }));
+  }, [connectionId]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const payload: RandevuOlusturDto = {
+        ...form,
+        Tarih: new Date(form.Tarih).toISOString(),
+        SignalRConnectionId: connectionId || form.SignalRConnectionId,
+      };
+      await randevuApi.misafir(payload);
+      showSuccess('Randevu Alındı', 'Randevu detaylarınız sisteme kaydedildi.');
+    } catch (error: unknown) {
+      showError('Randevu Oluşturulamadı', error instanceof Error ? error.message : 'Tarih ve saat seçimini kontrol ediniz.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-12">
+      <div className="mb-8 text-center">
+        <h1 className="text-3xl font-bold text-ink-900 mb-2">Hızlı Randevu Oluştur</h1>
+        <p className="text-sm text-ink-500">Kayıt olmadan saniyeler içinde aracınız için servis randevusu alın.</p>
+      </div>
+
+      {aiMesaji && (
+        <div className="mb-6 rounded-2xl border border-accent-200 bg-accent-50 p-4 flex gap-3 shadow-sm">
+          <Sparkles className="h-6 w-6 text-accent-600 shrink-0" />
+          <div className="flex-1">
+            <h3 className="text-sm font-semibold text-accent-900 mb-1">Yapay Zeka Analizi</h3>
+            <p className="text-sm text-accent-800 leading-relaxed">{aiMesaji}</p>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="card p-6 sm:p-8 space-y-8">
+        
+        {/* İletişim Bilgileri Bölümü */}
+        <div>
+          <h2 className="text-lg font-semibold text-ink-900 mb-4 border-b border-ink-100 pb-2">Kişisel Bilgiler</h2>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="label-text">Adınız Soyadınız</label>
+              <input
+                name="MusteriAdSoyad"
+                type="text"
+                className="input-field mt-1"
+                value={form.MusteriAdSoyad}
+                onChange={(e) => setForm({ ...form, MusteriAdSoyad: e.target.value })}
+                placeholder="Örn: Ayşe Demir"
+                required
+              />
+            </div>
+            <div>
+              <label className="label-text">Telefon Numaranız</label>
+              <input
+                name="MusteriTelefon"
+                type="tel"
+                className="input-field mt-1"
+                value={form.MusteriTelefon}
+                onChange={(e) => setForm({ ...form, MusteriTelefon: e.target.value })}
+                placeholder="05XX XXX XX XX"
+                required
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label-text">E-posta Adresiniz</label>
+              <input
+                name="Email"
+                type="email"
+                className="input-field mt-1"
+                value={form.Email}
+                onChange={(e) => setForm({ ...form, Email: e.target.value })}
+                placeholder="Fatura ve bildirimler için"
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Araç ve Servis Bilgileri Bölümü */}
+        <div>
+          <h2 className="text-lg font-semibold text-ink-900 mb-4 border-b border-ink-100 pb-2">Araç ve Servis Detayları</h2>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="label-text">Araç Plakası</label>
+              <input
+                name="AracPlaka"
+                type="text"
+                className="input-field mt-1 uppercase"
+                value={form.AracPlaka}
+                onChange={(e) => setForm({ ...form, AracPlaka: e.target.value.toUpperCase() })}
+                placeholder="34 ABC 123"
+                required
+              />
+            </div>
+            <div>
+              <label className="label-text">Marka ve Model</label>
+              <input
+                name="AracMarkaModel"
+                type="text"
+                className="input-field mt-1"
+                value={form.AracMarkaModel}
+                onChange={(e) => setForm({ ...form, AracMarkaModel: e.target.value })}
+                placeholder="Örn: Fiat Egea"
+                required
+              />
+            </div>
+            <div>
+              <label className="label-text">Üretim Yılı</label>
+              <input
+                name="AracUretimYili"
+                type="number"
+                min="1990"
+                max={new Date().getFullYear() + 1}
+                className="input-field mt-1"
+                value={form.AracUretimYili}
+                onChange={(e) => setForm({ ...form, AracUretimYili: Number(e.target.value) })}
+                required
+              />
+            </div>
+            <div>
+              <label className="label-text">Tahmini Hizmet Tipi</label>
+              <select
+                name="HizmetTipiId"
+                className="input-field mt-1"
+                value={form.HizmetTipiId}
+                onChange={(e) => setForm({ ...form, HizmetTipiId: Number(e.target.value) })}
+              >
+                {hizmetler.map((h) => (
+                  <option key={h.Id} value={h.Id}>
+                    {h.Ad}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label-text">Randevu Tarihi ve Saati</label>
+              <input
+                name="Tarih"
+                type="datetime-local"
+                className="input-field mt-1"
+                value={form.Tarih}
+                onChange={(e) => setForm({ ...form, Tarih: e.target.value })}
+                required
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label-text">Arıza Şikayetiniz / Eklemek İstedikleriniz</label>
+              <textarea
+                name="MusteriNotu"
+                className="input-field mt-1 min-h-[100px] resize-none"
+                value={form.MusteriNotu}
+                onChange={(e) => setForm({ ...form, MusteriNotu: e.target.value })}
+                placeholder="Lütfen şikayetinizi detaylıca belirtin. Yapay zeka sistemimiz talebinizi analiz edecektir."
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" disabled={loading} className="btn-primary w-full text-lg py-3">
+          {loading ? 'İşleniyor...' : 'Randevuyu Tamamla'}
+          {!loading && <ArrowRight className="h-5 w-5 ml-2 inline-block" />}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+
+======================================= 
+DOSYA: LandingPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Wrench,
+  Calendar,
+  Sparkles,
+  ShieldCheck,
+  Clock,
+  TrendingUp,
+  Car,
+  CheckCircle2,
+  ArrowRight,
+  Cpu,
+  Zap,
+} from 'lucide-react';
+import { hizmetApi } from '@/services/api';
+import type { HizmetTipi } from '@/types';
+import { LoadingSpinner } from '@/components/Loading';
+
+export function LandingPage() {
+  const [hizmetler, setHizmetler] = useState<HizmetTipi[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    hizmetApi
+      .listele()
+      .then(setHizmetler)
+      .catch(() => setHizmetler([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div>
+      {/* Hero */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-ink-950 via-ink-900 to-brand-950">
+        {/* Grid pattern overlay */}
+        <div
+          className="absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h60v60H0z' fill='none' stroke='%23ffffff' stroke-width='0.5'/%3E%3C/svg%3E")`,
+          }}
+        />
+        {/* Glow orbs */}
+        <div className="absolute top-1/4 -left-20 w-72 h-72 bg-brand-600/30 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-accent-500/20 rounded-full blur-3xl" />
+
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-20 pb-24 sm:pt-28 sm:pb-32">
+          <div className="grid lg:grid-cols-2 gap-12 items-center">
+            <div>
+              {/* Badge */}
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 px-3 py-1.5 mb-6">
+                <Sparkles className="h-3.5 w-3.5 text-accent-400" />
+                <span className="text-xs font-medium text-white/90">Yapay Zeka Destekli Servis</span>
+              </div>
+
+              <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold text-white leading-[1.1] text-balance">
+                Aracınızın Bakımı
+                <span className="block bg-gradient-to-r from-brand-400 to-accent-400 bg-clip-text text-transparent">
+                  Akıllı Ellerde
+                </span>
+              </h1>
+
+              <p className="mt-6 text-lg text-ink-300 leading-relaxed max-w-xl">
+                Online randevu alın, uzman ustalarımız aracınızı incelesin. Yapay zeka destekli analiz ile aracınızın durumu hakkında anlık bilgilendirme alın.
+              </p>
+
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link to="/randevu" className="btn-accent">
+                  <Calendar className="h-5 w-5" />
+                  Hemen Randevu Al
+                </Link>
+                <Link to="/hizmetler" className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/5 backdrop-blur-sm px-5 py-3 text-sm font-semibold text-white transition-all hover:bg-white/10">
+                  Hizmetleri Keşfet
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+
+              {/* Stats */}
+              <div className="mt-12 grid grid-cols-3 gap-6">
+                {[
+                  { value: '10K+', label: 'Mutlu Müşteri' },
+                  { value: '25+', label: 'Uzman Usta' },
+                  { value: '%99', label: 'Memnuniyet' },
+                ].map((stat) => (
+                  <div key={stat.label}>
+                    <p className="text-2xl sm:text-3xl font-bold text-white">{stat.value}</p>
+                    <p className="text-xs text-ink-400 mt-1">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Image card */}
+            <div className="relative hidden lg:block">
+              <div className="absolute -inset-4 bg-gradient-to-br from-brand-600/20 to-accent-500/20 rounded-3xl blur-2xl" />
+              <div className="relative rounded-3xl overflow-hidden shadow-2xl border border-white/10 animate-float">
+                <img
+                  src="https://images.pexels.com/photos/3807517/pexels-photo-3807517.jpeg?auto=compress&cs=tinysrgb&h=650&w=940"
+                  alt="Oto Servis"
+                  className="w-full h-[420px] object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-950/80 to-transparent" />
+                {/* Floating AI badge */}
+                <div className="absolute bottom-4 left-4 right-4 glass rounded-xl p-4 border border-white/20">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700">
+                      <Cpu className="h-5 w-5 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-ink-900">AI Analiz Aktif</p>
+                      <p className="text-xs text-ink-500">Aracınız anlık olarak analiz ediliyor</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-success-500 animate-pulse" />
+                      <span className="text-xs text-success-600 font-medium">Canlı</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Wave separator */}
+        <svg className="absolute bottom-0 left-0 right-0 w-full" viewBox="0 0 1440 80" fill="none" preserveAspectRatio="none">
+          <path d="M0 80L60 72C120 64 240 48 360 42.7C480 37 600 43 720 48C840 53 960 56 1080 53.3C1200 51 1320 43 1380 39L1440 35V80H0Z" fill="#f6f7f9" />
+        </svg>
+      </section>
+
+      {/* Features */}
+      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+        <div className="text-center mb-12">
+          <p className="text-sm font-semibold text-brand-600 uppercase tracking-wide mb-2">Neden Biz?</p>
+          <h2 className="text-3xl sm:text-4xl font-bold text-ink-900">Akıllı Servis Deneyimi</h2>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[
+            {
+              icon: Sparkles,
+              title: 'Yapay Zeka Analizi',
+              desc: 'Aracınızın durumu AI tarafından analiz edilir, sonuçlar anında size bildirilir.',
+              color: 'from-brand-500 to-brand-700',
+            },
+            {
+              icon: Calendar,
+              title: 'Kolay Randevu',
+              desc: 'Misafir veya kayıtlı kullanıcı olarak saniyeler içinde randevu oluşturun.',
+              color: 'from-accent-500 to-accent-700',
+            },
+            {
+              icon: ShieldCheck,
+              title: 'Güvenli Servis',
+              desc: 'Uzman ustalar ve modern ekipmanlarla güvenle aracınızı emanet edin.',
+              color: 'from-success-500 to-success-700',
+            },
+            {
+              icon: Clock,
+              title: 'Hızlı İşlem',
+              desc: 'Önceden planlanmış servis süresi ile bekleme sürenizi minimize edin.',
+              color: 'from-brand-600 to-brand-800',
+            },
+            {
+              icon: TrendingUp,
+              title: 'Şeffaf Fiyatlandırma',
+              desc: 'Önceden görebileceğiniz net fiyatlar ile sürpriz maliyet yok.',
+              color: 'from-accent-600 to-accent-800',
+            },
+            {
+              icon: Zap,
+              title: 'Anlık Bildirimler',
+              desc: 'SignalR teknolojisi ile servis sürecini gerçek zamanlı takip edin.',
+              color: 'from-success-600 to-success-800',
+            },
+          ].map((feature) => {
+            const Icon = feature.icon;
+            return (
+              <div key={feature.title} className="card card-hover p-6">
+                <div className={`flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} mb-4 shadow-lg`}>
+                  <Icon className="h-6 w-6 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-ink-900 mb-2">{feature.title}</h3>
+                <p className="text-sm text-ink-600 leading-relaxed">{feature.desc}</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Services preview */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-12 gap-4">
+            <div>
+              <p className="text-sm font-semibold text-brand-600 uppercase tracking-wide mb-2">Hizmetlerimiz</p>
+              <h2 className="text-3xl sm:text-4xl font-bold text-ink-900">Servis Seçenekleri</h2>
+            </div>
+            <Link to="/hizmetler" className="btn-ghost">
+              Tümünü Gör
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+
+          {loading ? (
+            <LoadingSpinner label="Hizmetler yükleniyor..." />
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {hizmetler.slice(0, 6).map((hizmet) => (
+                <div key={hizmet.Id} className="card card-hover p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-brand-100">
+                      <Wrench className="h-5 w-5 text-brand-600" />
+                    </div>
+                    <span className="text-lg font-bold text-ink-900">
+                      {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(hizmet.Fiyat)}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-semibold text-ink-900 mb-1">{hizmet.Ad}</h3>
+                  {hizmet.GerekenUzmanlik && (
+                    <p className="text-xs text-ink-400 mb-3">Uzmanlık: {hizmet.GerekenUzmanlik}</p>
+                  )}
+                  <div className="flex items-center gap-4 text-xs text-ink-500">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      Usta: {hizmet.UstaSureDakika} dk
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Car className="h-3.5 w-3.5" />
+                      Lift: {hizmet.LiftSureDakika} dk
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+        <div className="text-center mb-12">
+          <p className="text-sm font-semibold text-brand-600 uppercase tracking-wide mb-2">Nasıl Çalışır?</p>
+          <h2 className="text-3xl sm:text-4xl font-bold text-ink-900">3 Basit Adım</h2>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-8">
+          {[
+            { step: '01', title: 'Randevu Oluştur', desc: 'Aracınızın bilgilerini girin, uygun hizmeti seçin ve tarih belirleyin.', icon: Calendar },
+            { step: '02', title: 'Servis Süreci', desc: 'Uzman ustamız aracınızı inceler, yapay zeka analizi başlar.', icon: Wrench },
+            { step: '03', title: 'Anlık Sonuç', desc: 'AI analiz sonuçları bildirim olarak ekranınıza gelir.', icon: CheckCircle2 },
+          ].map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.step} className="relative">
+                <div className="card p-8">
+                  <span className="text-4xl font-bold font-display text-brand-200">{item.step}</span>
+                  <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 my-4 shadow-lg">
+                    <Icon className="h-6 w-6 text-white" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-ink-900 mb-2">{item.title}</h3>
+                  <p className="text-sm text-ink-600 leading-relaxed">{item.desc}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pb-20">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-700 via-brand-800 to-ink-950 p-8 sm:p-12">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-accent-500/20 rounded-full blur-3xl" />
+          <div className="absolute bottom-0 left-0 w-48 h-48 bg-brand-400/20 rounded-full blur-3xl" />
+          <div className="relative flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Aracınız için hemen randevu alın</h2>
+              <p className="text-ink-300">Yapay zeka destekli analiz ile aracınızı güvende tutun.</p>
+            </div>
+            <Link to="/randevu" className="btn-accent whitespace-nowrap">
+              <Calendar className="h-5 w-5" />
+              Randevu Al
+            </Link>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: LoginPage.tsx 
+======================================= 
+import { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Mail, Lock, LogIn, ArrowLeft, Wrench } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { dashboardPath } from '@/lib/jwt';
+import type { LoginDto } from '@/types';
+
+export function LoginPage() {
+  // logout fonksiyonunu da AuthContext'ten çekiyoruz
+  const { login, logout } = useAuth(); 
+  const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
+
+  const [form, setForm] = useState<LoginDto>({ Email: '', Sifre: '' });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.Email.trim() || !form.Sifre.trim()) {
+      showError('Eksik bilgi', 'Lütfen tüm alanları doldurun.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const session = await login(form);
+
+      // --- MİSAFİR ENGELLEME (GÜVENLİK KALKANI) ---
+      if (session.Rol === 'Misafir' || session.Rol === 'misafir') {
+        // Eğer sistem misafire yanlışlıkla token verdiyse, anında sil!
+        if (logout) await logout(); 
+        
+        showError(
+          'Kayıtlı Değilsiniz', 
+          'Bu e-posta adresi ile daha önce sadece misafir randevusu oluşturulmuş. Sisteme giriş yapabilmek için lütfen "Kayıt Ol" sayfasından müşteri hesabınızı oluşturun.'
+        );
+        setLoading(false);
+        return; // İşlemi burada kes, ana sayfaya yönlendirme!
+      }
+      // --------------------------------------------
+
+      showSuccess('Giriş başarılı', `Hoş geldiniz.`);
+      navigate(from || dashboardPath(session.Rol), { replace: true });
+      
+    } catch (error: unknown) {
+      showError('Giriş başarısız', error instanceof Error ? error.message : 'Bilgilerinizi kontrol edip tekrar deneyin.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="flex flex-col items-center mb-8">
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 shadow-xl shadow-brand-600/20 mb-4">
+            <Wrench className="h-8 w-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-ink-900">Giriş Yap</h1>
+          <p className="text-sm text-ink-500 mt-1">Hesabınıza erişmek için bilgilerinizi girin</p>
+        </div>
+
+        <div className="card p-8">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label className="label-text">E-posta Adresi</label>
+              <div className="relative mt-1">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  name="Email"
+                  type="email"
+                  className="input-field pl-10"
+                  value={form.Email}
+                  onChange={(e) => setForm({ ...form, Email: e.target.value })}
+                  placeholder="ornek@email.com"
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label-text">Şifre</label>
+              <div className="relative mt-1">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  name="Sifre"
+                  type="password"
+                  className="input-field pl-10"
+                  value={form.Sifre}
+                  onChange={(e) => setForm({ ...form, Sifre: e.target.value })}
+                  placeholder="••••••••"
+                  required
+                />
+              </div>
+            </div>
+            <div className="text-right">
+              <Link to="/sifremi-unuttum" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+                Şifremi unuttum
+              </Link>
+            </div>
+            <button type="submit" disabled={loading} className="btn-primary w-full">
+              <LogIn className="h-4 w-4 mr-2" />
+              {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+            </button>
+          </form>
+          <div className="mt-6 pt-6 border-t border-ink-100 text-center text-sm text-ink-500">
+            Hesabınız yok mu?{' '}
+            <Link to="/kayit" className="font-semibold text-brand-600 hover:text-brand-700">
+              Hemen Kayıt Olun
+            </Link>
+          </div>
+        </div>
+        <div className="mt-6 text-center">
+          <Link to="/" className="btn-ghost">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Ana sayfaya dön
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+======================================= 
+DOSYA: MyAppointmentsPage.tsx 
+======================================= 
+import { useCallback, useEffect, useState } from 'react';
+import { Calendar, Trash2 } from 'lucide-react';
+import { randevuApi } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
+import { EmptyState } from '@/components/States';
+import { LoadingSpinner } from '@/components/Loading';
+import { RandevuDurumuColors, RandevuDurumuLabels, type Randevu, type RandevuDurumu } from '@/types';
+
+export function MyAppointmentsPage() {
+  const { showSuccess, showError } = useToast();
+  const [items, setItems] = useState<Randevu[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    randevuApi
+      .benimRandevularim()
+      .then(setItems)
+      .catch((err) => showError('Liste alınamadı', err.message))
+      .finally(() => setLoading(false));
+  }, [showError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const iptal = async (id: number) => {
+    if (!confirm(`Randevu #${id} iptal edilsin mi?`)) return;
+    try {
+      await randevuApi.iptal(id);
+      showSuccess('İptal edildi');
+      load();
+    } catch (error: unknown) {
+      showError('İptal edilemedi', error instanceof Error ? error.message : '2 saatten az kalmış olabilir.');
+    }
+  };
+
+  if (loading) return <LoadingSpinner fullPage label="Randevular yükleniyor..." />;
+
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-12">
+      <h1 className="text-3xl font-bold mb-6">Randevularım</h1>
+      {items.length === 0 ? (
+        <EmptyState
+          icon={Calendar}
+          title="Randevu yok"
+          description="Henüz alınmış bir randevunuz bulunmamaktadır."
+        />
+      ) : (
+        <div className="space-y-4">
+          {items.map((r) => {
+            const id = r.Id;
+            const durum = (r.Durum ?? 0) as RandevuDurumu;
+            const tarih =
+              r.Tarih && !Number.isNaN(Date.parse(r.Tarih))
+                ? new Date(r.Tarih).toLocaleString('tr-TR')
+                : r.Tarih;
+            return (
+              <div key={id} className="card p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex-1">
+                  <p className="font-semibold text-ink-900">
+                    #{id} · {r.Arac?.Plaka || (r.AracId ? `Araç #${r.AracId}` : 'Araç bilgisi yok')}
+                  </p>
+                  <p className="text-sm text-ink-500">
+                    {tarih} {r.HizmetTipi?.Ad ? `· ${r.HizmetTipi.Ad}` : r.HizmetTipiId ? `· HizmetTipiId ${r.HizmetTipiId}` : ''}
+                  </p>
+                  {r.MusteriNotu && <p className="text-sm mt-1">{r.MusteriNotu}</p>}
+                </div>
+                <span className={`rounded-full border px-3 py-1 text-xs font-medium ${RandevuDurumuColors[durum] ?? ''}`}>
+                  {RandevuDurumuLabels[durum] ?? `Durum ${durum}`}
+                </span>
+                <button className="btn-ghost text-error-600" onClick={() => iptal(id)}>
+                  <Trash2 className="h-4 w-4" />
+                  İptal
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: ProfilePage.tsx 
+======================================= 
+import { User, Mail, Phone, Shield, Key, Edit3, Car } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Link } from 'react-router-dom';
+
+export function ProfilePage() {
+  // AuthContext'ten giriş yapmış kullanıcının bilgilerini 'user' nesnesi ile çekiyoruz
+  const { user } = useAuth();
+
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-12">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-ink-900 mb-2">Hesabım</h1>
+        <p className="text-sm text-ink-500">Kişisel bilgilerinizi ve hesap güvenliğinizi buradan inceleyebilirsiniz.</p>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-6">
+        {/* Sol Taraf: Profil Özet Kartı */}
+        <div className="md:col-span-1 space-y-6">
+          <div className="card p-6 flex flex-col items-center text-center">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-lg mb-4">
+              <span className="text-4xl font-bold text-white">
+                {user?.AdSoyad?.charAt(0).toUpperCase() || 'M'}
+              </span>
+            </div>
+            <h2 className="text-xl font-bold text-ink-900">{user?.AdSoyad || 'Sayın Müşterimiz'}</h2>
+            
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-accent-50 px-3 py-1.5 mt-3 text-xs font-semibold text-accent-700 border border-accent-100">
+              <Shield className="h-3.5 w-3.5" />
+              {user?.Rol === 'Musteri' ? 'Kayıtlı Müşteri' : user?.Rol}
+            </div>
+          </div>
+
+          {/* Hızlı Bağlantılar Menüsü */}
+          <div className="card p-4 space-y-2">
+            <Link to="/randevularim" className="flex items-center gap-3 p-3 rounded-lg hover:bg-ink-50 text-ink-700 hover:text-brand-600 transition-colors font-medium text-sm">
+              <Car className="h-5 w-5" />
+              Araçlarım ve Randevularım
+            </Link>
+          </div>
+        </div>
+
+        {/* Sağ Taraf: Detaylı Bilgiler */}
+        <div className="md:col-span-2 space-y-6">
+          
+          {/* Kişisel Bilgiler Kutusu */}
+          <div className="card p-6 sm:p-8">
+            <div className="flex items-center justify-between mb-6 border-b border-ink-100 pb-4">
+              <h3 className="text-lg font-semibold text-ink-900">Kişisel Bilgiler</h3>
+              <button className="btn-ghost text-brand-600 px-3 py-1.5 text-sm hover:bg-brand-50">
+                <Edit3 className="h-4 w-4 mr-2 inline-block" />
+                Bilgileri Güncelle
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="flex items-start gap-4 p-3 rounded-xl hover:bg-ink-50/50 transition-colors">
+                <div className="bg-white p-2.5 rounded-lg shadow-sm border border-ink-100">
+                  <User className="h-5 w-5 text-ink-500" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-ink-400 uppercase tracking-wider">Ad Soyad</p>
+                  <p className="text-sm font-medium text-ink-900 mt-1">{user?.AdSoyad || 'Belirtilmemiş'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4 p-3 rounded-xl hover:bg-ink-50/50 transition-colors">
+                <div className="bg-white p-2.5 rounded-lg shadow-sm border border-ink-100">
+                  <Mail className="h-5 w-5 text-ink-500" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-ink-400 uppercase tracking-wider">E-posta Adresi</p>
+                  <p className="text-sm font-medium text-ink-900 mt-1">{user?.Email || 'Belirtilmemiş'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4 p-3 rounded-xl hover:bg-ink-50/50 transition-colors">
+                <div className="bg-white p-2.5 rounded-lg shadow-sm border border-ink-100">
+                  <Phone className="h-5 w-5 text-ink-500" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-ink-400 uppercase tracking-wider">Telefon Numarası</p>
+                  <p className="text-sm font-medium text-ink-900 mt-1">{user?.Telefon || 'Sisteme kayıtlı numara bulunmuyor'}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Güvenlik ve Şifre Kutusu */}
+          <div className="card p-6 sm:p-8 border-l-4 border-l-brand-500">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <div className="bg-brand-50 p-3.5 rounded-full text-brand-600 shrink-0">
+                <Key className="h-6 w-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold text-ink-900">Hesap Güvenliği</h3>
+                <p className="text-sm text-ink-500 mt-1 leading-relaxed">Hesabınızı güvende tutmak için şifrenizi kimseyle paylaşmayın ve belirli aralıklarla güncelleyin.</p>
+              </div>
+              <Link to="/sifremi-unuttum" className="btn-secondary w-full sm:w-auto mt-4 sm:mt-0 whitespace-nowrap">
+                Şifre Yenile
+              </Link>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+======================================= 
+DOSYA: RegisterPage.tsx 
+======================================= 
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { User, Mail, Lock, ArrowLeft } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import type { RegisterDto } from '@/types';
+
+export function RegisterPage() {
+  const { register } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
+  const [form, setForm] = useState<RegisterDto>({
+    AdSoyad: '',
+    Email: '',
+    Sifre: '',
+    Rol: 'Musteri',
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await register({ ...form, Rol: 'Musteri' });
+      showSuccess('Kayıt Başarılı', 'Hesabınız oluşturuldu, giriş yapabilirsiniz.');
+      navigate('/giris');
+    } catch (error: unknown) {
+      showError('Kayıt Başarısız', error instanceof Error ? error.message : 'Bir hata oluştu, lütfen tekrar deneyin.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        <h1 className="text-2xl font-bold text-ink-900 text-center mb-2">Aramıza Katılın</h1>
+        <p className="text-sm text-ink-500 text-center mb-8">Aracınızın kontrolü artık sizin elinizde</p>
+        
+        <div className="card p-8">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="label-text">Adınız Soyadınız</label>
+              <div className="relative mt-1">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  name="AdSoyad"
+                  className="input-field pl-10"
+                  value={form.AdSoyad}
+                  onChange={(e) => setForm({ ...form, AdSoyad: e.target.value })}
+                  placeholder="Örn: Ali Yılmaz"
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label-text">E-posta Adresiniz</label>
+              <div className="relative mt-1">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  name="Email"
+                  type="email"
+                  className="input-field pl-10"
+                  value={form.Email}
+                  onChange={(e) => setForm({ ...form, Email: e.target.value })}
+                  placeholder="ornek@email.com"
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label-text">Şifre Belirleyin</label>
+              <div className="relative mt-1">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
+                <input
+                  name="Sifre"
+                  type="password"
+                  minLength={6}
+                  className="input-field pl-10"
+                  value={form.Sifre}
+                  onChange={(e) => setForm({ ...form, Sifre: e.target.value })}
+                  placeholder="En az 6 karakter"
+                  required
+                />
+              </div>
+            </div>
+            
+            <button type="submit" disabled={loading} className="btn-primary w-full mt-6">
+              {loading ? 'Hesap Oluşturuluyor...' : 'Ücretsiz Kayıt Ol'}
+            </button>
+          </form>
+          <p className="mt-6 text-center text-sm text-ink-500">
+            Zaten bir hesabınız var mı?{' '}
+            <Link to="/giris" className="font-semibold text-brand-600 hover:text-brand-700">
+              Giriş Yapın
+            </Link>
+          </p>
+        </div>
+        <div className="mt-6 text-center">
+          <Link to="/" className="btn-ghost">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Ana sayfaya dön
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: ResetPasswordPage.tsx 
+======================================= 
+import { useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { authApi } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
+
+export function ResetPasswordPage() {
+  const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
+  
+  // URL'deki parametreleri (email ve token) yakalıyoruz
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('token');
+  const email = searchParams.get('email');
+
+  const [yeniSifre, setYeniSifre] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Eğer URL'de token veya email yoksa, formu hiç gösterme
+  if (!token || !email) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16 text-center">
+        <div className="card p-6 space-y-4">
+          <h1 className="text-xl font-bold text-red-600">Bağlantı Geçersiz</h1>
+          <p className="text-sm text-ink-600">
+            Güvenlik nedeniyle işlem yapılamıyor. Lütfen e-postanıza gelen bağlantıya tekrar tıklayın.
+          </p>
+          <Link to="/sifremi-unuttum" className="btn-primary w-full inline-block">
+            Yeni Bağlantı İste
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await authApi.sifreSifirla({
+        Email: email,
+        Token: token,
+        YeniSifre: yeniSifre
+      });
+      showSuccess('Şifre güncellendi', (res.data as { Mesaj?: string })?.Mesaj);
+      navigate('/giris');
+    } catch (error: unknown) {
+      showError('Sıfırlama başarısız', error instanceof Error ? error.message : 'Bağlantı süresi dolmuş olabilir.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-md px-4 py-16">
+      <h1 className="text-2xl font-bold mb-6 text-center">Yeni Şifre Belirleme</h1>
+      
+      <form onSubmit={handleSubmit} className="card p-6 space-y-4">
+        <div className="text-sm text-center text-ink-600 bg-blue-50 p-2 rounded">
+          <strong>{email}</strong> hesabı için yeni şifrenizi giriniz.
+        </div>
+
+        <div>
+          <label className="label-text">Yeni Şifreniz</label>
+          <input
+            name="YeniSifre"
+            type="password"
+            minLength={6}
+            className="input-field"
+            value={yeniSifre}
+            onChange={(e) => setYeniSifre(e.target.value)}
+            placeholder="En az 6 karakter"
+            required
+          />
+        </div>
+        
+        <button type="submit" disabled={loading} className="btn-primary w-full">
+          {loading ? 'Kaydediliyor...' : 'Yeni şifreyi kaydet'}
+        </button>
+      </form>
+    </div>
+  );
+}
+======================================= 
+DOSYA: ServicesPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Wrench, Clock, Car, TrendingUp, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { hizmetApi, ustaApi } from '@/services/api';
+import type { HizmetTipi, Usta } from '@/types';
+import { LoadingSpinner } from '@/components/Loading';
+import { ErrorState } from '@/components/States';
+
+export function ServicesPage() {
+  const [hizmetler, setHizmetler] = useState<HizmetTipi[]>([]);
+  const [ustalar, setUstalar] = useState<Usta[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = () => {
+    setLoading(true);
+    setError(null);
+    Promise.all([hizmetApi.listele(), ustaApi.listele()])
+      .then(([h, u]) => {
+        setHizmetler(h);
+        setUstalar(u);
+      })
+      .catch((err) => setError(err.message || 'Hizmetler yüklenemedi'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  if (loading) return <LoadingSpinner label="Hizmetler yükleniyor..." fullPage />;
+  if (error) return <ErrorState message={error} onRetry={loadData} />;
+
+  const fmtPrice = (price: number) =>
+    new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(price);
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+      <div className="mb-10">
+        <p className="text-sm font-semibold text-brand-600 uppercase tracking-wide mb-2">Hizmetler</p>
+        <h1 className="text-3xl sm:text-4xl font-bold text-ink-900">Servis Kataloğu</h1>
+        <p className="mt-2 text-ink-600 max-w-2xl">
+          İstasyon listesi yetki ister; bu sayfada yalnızca herkese açık hizmet ve usta uçları kullanılır.
+        </p>
+      </div>
+
+      <section className="mb-16">
+        <div className="flex items-center gap-2 mb-6">
+          <Wrench className="h-5 w-5 text-brand-600" />
+          <h2 className="text-xl font-semibold text-ink-900">Hizmet Türleri</h2>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {hizmetler.map((hizmet) => (
+            <div key={hizmet.Id} className="card card-hover p-6">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-lg">
+                  <Wrench className="h-6 w-6 text-white" />
+                </div>
+                <span className="text-xl font-bold text-ink-900">{fmtPrice(hizmet.Fiyat)}</span>
+              </div>
+              <h3 className="text-lg font-semibold text-ink-900 mb-2">{hizmet.Ad}</h3>
+              {hizmet.GerekenUzmanlik && (
+                <div className="inline-flex items-center gap-1 rounded-md bg-accent-50 text-accent-700 text-xs font-medium px-2 py-1 mb-3">
+                  <ShieldCheck className="h-3 w-3" />
+                  {hizmet.GerekenUzmanlik}
+                </div>
+              )}
+              <div className="flex items-center gap-4 text-xs text-ink-500 pt-3 border-t border-ink-100">
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  Usta: {hizmet.UstaSureDakika} dk
+                </span>
+                <span className="flex items-center gap-1">
+                  <Car className="h-3.5 w-3.5" />
+                  Lift: {hizmet.LiftSureDakika} dk
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-16">
+        <div className="flex items-center gap-2 mb-6">
+          <CheckCircle2 className="h-5 w-5 text-brand-600" />
+          <h2 className="text-xl font-semibold text-ink-900">Uzman Ustalarımız</h2>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {ustalar.map((usta) => (
+            <div key={usta.Id} className="card p-5 flex items-center gap-4">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-white font-semibold text-lg flex-shrink-0">
+                {usta.AdSoyad?.charAt(0).toUpperCase() ?? '?'}
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold text-ink-900 truncate">{usta.AdSoyad}</h3>
+                <p className="text-sm text-ink-500 truncate">{usta.UzmanlikAlani}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="card p-8 text-center bg-gradient-to-br from-brand-50 to-white">
+        <TrendingUp className="h-8 w-8 text-brand-600 mx-auto mb-3" />
+        <h2 className="text-xl font-semibold text-ink-900 mb-2">Hizmet seçtiniz mi?</h2>
+        <Link to="/randevu" className="btn-primary">
+          Misafir randevu al
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: UstaPanelPage.tsx 
+======================================= 
+import { useEffect, useState } from 'react';
+import { istasyonApi, parcaApi, randevuApi } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
+import type { Istasyon, KullanilanParcaDto, RandevuTamamlamaDto, SureUzatDto, YedekParca } from '@/types';
+
+export function UstaPanelPage() {
+  const { showSuccess, showError } = useToast();
+  const [istasyonlar, setIstasyonlar] = useState<Istasyon[]>([]);
+  const [parcalar, setParcalar] = useState<YedekParca[]>([]);
+  const [randevuId, setRandevuId] = useState('');
+  const [sure, setSure] = useState<SureUzatDto>({ EkSureDakika: 15, Sebep: '' });
+  const [tamamla, setTamamla] = useState<RandevuTamamlamaDto>({
+    RandevuId: 0,
+    KullanilanParcalar: [{ YedekParcaId: 0, KullanilanMiktar: 1 }],
+  });
+
+  useEffect(() => {
+    istasyonApi.listele().then(setIstasyonlar).catch(() => setIstasyonlar([]));
+    parcaApi.tumStoklar().then(setParcalar).catch(() => setParcalar([]));
+  }, []);
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      const res = await fn();
+      showSuccess(ok, (res as { data?: { Mesaj?: string } })?.data?.Mesaj);
+    } catch (error: unknown) {
+      showError('İşlem başarısız', error instanceof Error ? error.message : '');
+    }
+  };
+
+  const updateParca = (index: number, patch: Partial<KullanilanParcaDto>) => {
+    const list = [...tamamla.KullanilanParcalar];
+    list[index] = { ...list[index], ...patch };
+    setTamamla({ ...tamamla, KullanilanParcalar: list });
+  };
+
+  return (
+    <div className="space-y-8 max-w-4xl">
+      <div>
+        <h1 className="text-2xl font-bold">Usta paneli</h1>
+        <p className="text-sm text-ink-500">İstasyon durumu, iş başlatma, süre uzatma ve tamamlama.</p>
+      </div>
+
+      <section className="card p-6">
+        <h2 className="font-semibold mb-4">İstasyonlar</h2>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {istasyonlar.map((i) => (
+            <div key={i.Id} className="rounded-xl border border-ink-200 p-3 flex justify-between">
+              <span>{i.Ad}</span>
+              <span className={i.MusaitMi ? 'text-success-600' : 'text-error-600'}>
+                {i.MusaitMi ? 'Müsait' : 'Dolu'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold">Randevu başlat / süre uzat</h2>
+        <div>
+          <label className="label-text">RandevuId</label>
+          <input className="input-field" value={randevuId} onChange={(e) => setRandevuId(e.target.value)} />
+        </div>
+        <button className="btn-primary" type="button" onClick={() => run(() => randevuApi.baslat(Number(randevuId)), 'İşlem başladı')}>
+          Başlat
+        </button>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label-text">EkSureDakika</label>
+            <input name="EkSureDakika" type="number" className="input-field" value={sure.EkSureDakika} onChange={(e) => setSure({ ...sure, EkSureDakika: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="label-text">Sebep</label>
+            <input name="Sebep" className="input-field" value={sure.Sebep} onChange={(e) => setSure({ ...sure, Sebep: e.target.value })} />
+          </div>
+        </div>
+        <button className="btn-secondary" type="button" onClick={() => run(() => randevuApi.sureUzat(Number(randevuId), sure), 'Süre uzatıldı')}>
+          Süre uzat
+        </button>
+      </section>
+
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold">Randevu tamamla (RandevuTamamlamaDto)</h2>
+        <div>
+          <label className="label-text">RandevuId</label>
+          <input
+            name="RandevuId"
+            type="number"
+            className="input-field"
+            value={tamamla.RandevuId || ''}
+            onChange={(e) => setTamamla({ ...tamamla, RandevuId: Number(e.target.value) })}
+          />
+        </div>
+        {tamamla.KullanilanParcalar.map((p, idx) => (
+          <div key={idx} className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="label-text">YedekParcaId</label>
+              <select
+                name="YedekParcaId"
+                className="input-field"
+                value={p.YedekParcaId}
+                onChange={(e) => updateParca(idx, { YedekParcaId: Number(e.target.value) })}
+              >
+                <option value={0}>Seçin</option>
+                {parcalar.map((yp) => (
+                  <option key={yp.Id} value={yp.Id}>
+                    {yp.ParcaAdi} (stok {yp.StokMiktari})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label-text">KullanilanMiktar</label>
+              <input
+                name="KullanilanMiktar"
+                type="number"
+                className="input-field"
+                value={p.KullanilanMiktar}
+                onChange={(e) => updateParca(idx, { KullanilanMiktar: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() =>
+            setTamamla({
+              ...tamamla,
+              KullanilanParcalar: [...tamamla.KullanilanParcalar, { YedekParcaId: 0, KullanilanMiktar: 1 }],
+            })
+          }
+        >
+          Parça satırı ekle
+        </button>
+        <button
+          className="btn-primary w-full"
+          type="button"
+          onClick={() =>
+            run(
+              () =>
+                randevuApi.tamamla({
+                  ...tamamla,
+                  KullanilanParcalar: tamamla.KullanilanParcalar.filter((x) => x.YedekParcaId > 0),
+                }),
+              'Fatura kesildi',
+            )
+          }
+        >
+          Tamamla ve fatura kes
+        </button>
+      </section>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: VeznedarPanelPage.tsx 
+======================================= 
+import { useState } from 'react';
+import { odemeApi } from '@/services/api';
+import { useToast } from '@/contexts/ToastContext';
+import type { KrediKartiDto } from '@/types';
+
+const ODEME_TURLERI = ['Nakit', 'POS', 'Havale'] as const;
+
+export function VeznedarPanelPage() {
+  const { showSuccess, showError } = useToast();
+  const [faturaId, setFaturaId] = useState('');
+  const [odemeTuru, setOdemeTuru] = useState<string>('Nakit');
+  const [randevuId, setRandevuId] = useState('');
+  const [kart, setKart] = useState<KrediKartiDto>({
+    KartSahibiAdSoyad: '',
+    KartNumarasi: '',
+    SonKullanmaTarihi: '',
+    Cvv: '',
+  });
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      const res = await fn();
+      showSuccess(ok, (res as { data?: { Mesaj?: string } })?.data?.Mesaj);
+    } catch (error: unknown) {
+      showError('İşlem başarısız', error instanceof Error ? error.message : '');
+    }
+  };
+
+  return (
+    <div className="space-y-8 max-w-3xl">
+      <div>
+        <h1 className="text-2xl font-bold">Vezne</h1>
+        <p className="text-sm text-ink-500">
+          Fiziksel tahsilat query parametresi: odemeTuru. Kart alanları KrediKartiDto ile aynıdır; API fiziksel
+          uçta kart gövdesi beklemediği için POS seçilince yalnızca odemeTuru=POS gider.
+        </p>
+      </div>
+
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold">Fiziksel ödeme</h2>
+        <div>
+          <label className="label-text">FaturaId</label>
+          <input className="input-field" value={faturaId} onChange={(e) => setFaturaId(e.target.value)} />
+        </div>
+        <div>
+          <label className="label-text">odemeTuru</label>
+          <select className="input-field" value={odemeTuru} onChange={(e) => setOdemeTuru(e.target.value)}>
+            {ODEME_TURLERI.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        {odemeTuru === 'POS' && (
+          <div className="grid sm:grid-cols-2 gap-3 rounded-xl bg-ink-50 p-4">
+            {(['KartSahibiAdSoyad', 'KartNumarasi', 'SonKullanmaTarihi', 'Cvv'] as const).map((name) => (
+              <div key={name}>
+                <label className="label-text">{name}</label>
+                <input
+                  name={name}
+                  className="input-field"
+                  value={kart[name]}
+                  onChange={(e) => setKart({ ...kart, [name]: e.target.value })}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          className="btn-primary"
+          type="button"
+          onClick={() => run(() => odemeApi.fizikselOde(Number(faturaId), odemeTuru), 'Tahsil edildi')}
+        >
+          Tahsil et
+        </button>
+      </section>
+
+      <section className="card p-6 space-y-4">
+        <h2 className="font-semibold">Araç teslim</h2>
+        <p className="text-xs text-ink-500">Usta tamamlamış ve fatura ödenmiş olmalıdır.</p>
+        <div>
+          <label className="label-text">RandevuId</label>
+          <input className="input-field" value={randevuId} onChange={(e) => setRandevuId(e.target.value)} />
+        </div>
+        <button className="btn-primary" type="button" onClick={() => run(() => odemeApi.teslimEt(Number(randevuId)), 'Teslim onaylandı')}>
+          Teslim et
+        </button>
+      </section>
+    </div>
+  );
+}
+
+======================================= 
+DOSYA: api.ts 
+======================================= 
+import axios from 'axios';
+import { apiMessage, toPascalKeys } from '@/lib/json';
+import type {
+  HizmetTipi,
+  Istasyon,
+  KayitliRandevuTalebiDto,
+  LoginDto,
+  PersonelEkleDto,
+  Randevu,
+  RandevuOlusturDto,
+  RandevuTamamlamaDto,
+  RegisterDto,
+  SifreSifirlaDto,
+  SifremiUnuttumDto,
+  SureUzatDto,
+  Usta,
+  YedekParca,
+} from '@/types';
+
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
+
+export const api = axios.create({
+  baseURL: `${API_BASE}/api`,
+  headers: { 'Content-Type': 'application/json' },
+  transformRequest: [
+    (data, headers) => {
+      if (headers) headers['Content-Type'] = 'application/json';
+      if (data === undefined || data === null) return data;
+      if (typeof data === 'string') return data;
+      // DTO property adlarını (Sifre, Email, AdSoyad...) birebir PascalCase gönder.
+      return JSON.stringify(data);
+    },
+  ],
+});
+
+api.interceptors.request.use((config) => {
+  const token = sessionStorage.getItem('token');
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => {
+    response.data = toPascalKeys(response.data);
+    return response;
+  },
+  (error) => {
+    const data = error.response?.data;
+    const normalized = toPascalKeys(data);
+    error.message = apiMessage(normalized, error.message || 'İstek başarısız oldu.');
+    if (error.response) error.response.data = normalized;
+    if (error.response?.status === 401) {
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+    }
+    return Promise.reject(error);
+  },
+);
+
+export function getStoredUser() {
+  const raw = sessionStorage.getItem('user');
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuth() {
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('user');
+}
+
+export const authApi = {
+  register: (dto: RegisterDto) => api.post('/Auth/register', dto),
+  login: (dto: LoginDto) => api.post('/Auth/login', dto),
+  logout: () => api.post('/Auth/logout'),
+  sifremiUnuttum: (dto: SifremiUnuttumDto) => api.post('/Auth/sifremi-unuttum', dto),
+  sifreSifirla: (dto: SifreSifirlaDto) => api.post('/Auth/sifre-sifirla', dto),
+};
+
+export const adminApi = {
+  adminEkle: (dto: PersonelEkleDto) => api.post('/Admin/admin-ekle', dto),
+  personelEkle: (dto: PersonelEkleDto) => api.post('/Admin/personel-ekle', dto),
+};
+
+export const hizmetApi = {
+  listele: async (): Promise<HizmetTipi[]> => {
+    const res = await api.get('/HizmetTipleri');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+  ekle: (dto: Omit<HizmetTipi, 'Id'> & { Id?: number }) => api.post('/HizmetTipleri', dto),
+};
+
+export const istasyonApi = {
+  listele: async (): Promise<Istasyon[]> => {
+    const res = await api.get('/Istasyonlar');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+  ekle: (dto: Omit<Istasyon, 'Id'> & { Id?: number }) => api.post('/Istasyonlar', dto),
+};
+
+export const ustaApi = {
+  listele: async (): Promise<Usta[]> => {
+    const res = await api.get('/Ustalar');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+  ekle: (dto: Omit<Usta, 'Id'> & { Id?: number }) => api.post('/Ustalar', dto),
+};
+
+export const parcaApi = {
+  tumStoklar: async (): Promise<YedekParca[]> => {
+    const res = await api.get('/YedekParcalar/tum-stoklar');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+  kritikStoklar: async (): Promise<YedekParca[] | { Mesaj?: string }> => {
+    const res = await api.get('/YedekParcalar/kritik-stoklar');
+    return res.data;
+  },
+  ekle: (dto: Omit<YedekParca, 'Id'> & { Id?: number }) => api.post('/YedekParcalar', dto),
+  guncelle: (id: number, dto: YedekParca) => api.put(`/YedekParcalar/${id}`, dto),
+  sil: (id: number) => api.delete(`/YedekParcalar/${id}`),
+};
+
+export const randevuApi = {
+  misafir: (dto: RandevuOlusturDto) =>
+    api.post(`/Randevular/${encodeURIComponent('Misafir Randevu')}`, dto),
+  kayitliMusteri: (dto: KayitliRandevuTalebiDto) =>
+    api.post(`/Randevular/${encodeURIComponent('Kayıtlı Müşteri Randevu')}`, dto),
+  benimRandevularim: async (): Promise<Randevu[]> => {
+    const res = await api.get('/Randevular/benim-randevularim');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+  iptal: (id: number) => api.delete(`/Randevular/${id}`),
+  sureUzat: (id: number, dto: SureUzatDto) => api.put(`/Randevular/${id}/sure-uzat`, dto),
+  baslat: (id: number) => api.put(`/Randevular/${id}/basla`),
+  tamamla: (dto: RandevuTamamlamaDto) => api.post('/Randevular/tamamla', dto),
+};
+
+export const odemeApi = {
+  fizikselOde: (faturaId: number, odemeTuru: string) =>
+    api.post(`/Odeme/${faturaId}/fiziksel-ode`, null, { params: { odemeTuru } }),
+  teslimEt: (randevuId: number) => api.put(`/Odeme/${randevuId}/teslim-et`),
+};
+
+======================================= 
+DOSYA: signalr.ts 
+======================================= 
+import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
+import { API_BASE } from './api';
+
+type MessageHandler = (mesaj: string) => void;
+type StatusHandler = (connected: boolean) => void;
+
+class SignalRService {
+  private connection: HubConnection | null = null;
+  private messageHandlers = new Set<MessageHandler>();
+  private statusHandlers = new Set<StatusHandler>();
+  connectionId: string | null = null;
+
+  onTehis(handler: MessageHandler): () => void {
+    this.messageHandlers.add(handler);
+    return () => this.messageHandlers.delete(handler);
+  }
+
+  onStatus(handler: StatusHandler): () => void {
+    this.statusHandlers.add(handler);
+    return () => this.statusHandlers.delete(handler);
+  }
+
+  async connect(): Promise<void> {
+    if (this.connection?.state === 'Connected') return;
+
+    this.connection = new HubConnectionBuilder()
+      .withUrl(`${API_BASE}/notificationHub`)
+      .withAutomaticReconnect()
+      .configureLogging(LogLevel.Warning)
+      .build();
+
+    this.connection.on('ReceiveTehis', (mesaj: string) => {
+      this.messageHandlers.forEach((h) => h(mesaj));
+    });
+
+    this.connection.onreconnected(() => {
+      this.connectionId = this.connection?.connectionId ?? null;
+      this.statusHandlers.forEach((h) => h(true));
+    });
+
+    this.connection.onclose(() => {
+      this.connectionId = null;
+      this.statusHandlers.forEach((h) => h(false));
+    });
+
+    await this.connection.start();
+    this.connectionId = this.connection.connectionId ?? null;
+    this.statusHandlers.forEach((h) => h(true));
+  }
+
+  async disconnect(): Promise<void> {
+    if (!this.connection) return;
+    await this.connection.stop();
+    this.connection = null;
+    this.connectionId = null;
+  }
+}
+
+export const signalR = new SignalRService();
+
+======================================= 
+DOSYA: index.ts 
+======================================= 
+export const ROLES = [
+  'SuperAdmin',
+  'Admin',
+  'Musteri',
+  'Usta',
+  'Veznedar',
+  'DepoSorumlusu',
+] as const;
+
+export type Role = (typeof ROLES)[number];
+
+export type RandevuDurumu = 0 | 1 | 2 | 3 | 4;
+
+export const RandevuDurumuLabels: Record<RandevuDurumu, string> = {
+  0: 'Bekliyor',
+  1: 'İşlemde',
+  2: 'Tamamlandı',
+  3: 'İptal',
+  4: 'Teslim Edildi',
+};
+
+export const RandevuDurumuColors: Record<RandevuDurumu, string> = {
+  0: 'bg-warning-100 text-warning-700 border-warning-200',
+  1: 'bg-brand-100 text-brand-700 border-brand-200',
+  2: 'bg-success-100 text-success-700 border-success-200',
+  3: 'bg-error-100 text-error-700 border-error-200',
+  4: 'bg-accent-100 text-accent-700 border-accent-200',
+};
+
+export const PERSONEL_ROLLER: Role[] = ['Usta', 'Veznedar', 'DepoSorumlusu'];
+
+export interface Kullanici {
+  Id: number;
+  AdSoyad?: string | null;
+  Telefon?: string | null;
+  Email?: string | null;
+  Rol: Role | string;
+}
+
+export interface Arac {
+  Id: number;
+  KullaniciId: number;
+  Plaka?: string | null;
+  MarkaModel?: string | null;
+  UretimYili: number;
+}
+
+export interface HizmetTipi {
+  Id: number;
+  Ad: string;
+  Fiyat: number;
+  UstaSureDakika: number;
+  LiftSureDakika: number;
+  GerekenUzmanlik?: string | null;
+}
+
+export interface Istasyon {
+  Id: number;
+  Ad: string;
+  MusaitMi: boolean;
+}
+
+export interface Usta {
+  Id: number;
+  AdSoyad: string;
+  UzmanlikAlani: string;
+}
+
+export interface YedekParca {
+  Id: number;
+  ParcaAdi?: string | null;
+  BirimFiyat: number;
+  StokMiktari: number;
+  KritikStokSeviyesi: number;
+  UyumluHizmetTipiId: number;
+}
+
+export interface Fatura {
+  Id: number;
+  RandevuId: number;
+  ToplamParcaMaliyeti: number;
+  IscilikUcreti: number;
+  GenelToplam: number;
+  KesimTarihi: string;
+  PdfDosyaYolu?: string | null;
+  OdendiMi: boolean;
+  OdemeTarihi?: string | null;
+  OdemeYontemi?: string | null;
+  TahsilEdenKullaniciId?: number | null;
+}
+
+export interface Randevu {
+  Id: number;
+  AracId?: number | null;
+  KullaniciId: number;
+  HizmetTipiId: number;
+  UstaId?: number | null;
+  IstasyonId?: number | null;
+  Tarih: string;
+  MusteriNotu?: string | null;
+  AcilMi: boolean;
+  Durum: RandevuDurumu;
+  GerceklesenBaslangic?: string | null;
+  GerceklesenBitis?: string | null;
+  TeslimTarihi?: string | null;
+  TeslimEdenKullaniciId?: number | null;
+  Arac?: Arac;
+  Kullanici?: Kullanici;
+  HizmetTipi?: HizmetTipi;
+  Usta?: Usta;
+  Istasyon?: Istasyon;
+  Fatura?: Fatura;
+}
+
+export interface LoginDto {
+  Email: string;
+  Sifre: string;
+}
+
+export interface RegisterDto {
+  AdSoyad: string;
+  Email: string;
+  Sifre: string;
+  Rol?: string;
+}
+
+export interface SifremiUnuttumDto {
+  Email: string;
+}
+
+export interface SifreSifirlaDto {
+  Email: string;
+  Token: string;
+  YeniSifre: string;
+}
+
+export interface PersonelEkleDto {
+  AdSoyad: string;
+  Email: string;
+  Telefon?: string | null;
+  Sifre: string;
+  Rol: string;
+}
+
+export interface RandevuOlusturDto {
+  MusteriId?: number | null;
+  MusteriAdSoyad: string;
+  MusteriTelefon: string;
+  Email: string;
+  AracPlaka: string;
+  AracMarkaModel: string;
+  AracUretimYili: number;
+  HizmetTipiId: number;
+  Tarih: string;
+  MusteriNotu: string;
+  SignalRConnectionId: string;
+}
+
+export interface KayitliRandevuTalebiDto {
+  AracPlaka: string;
+  AracMarkaModel?: string | null;
+  AracUretimYili?: number | null;
+  Tarih: string;
+  MusteriNotu: string;
+  SignalRConnectionId: string;
+}
+
+export interface SureUzatDto {
+  EkSureDakika: number;
+  Sebep: string;
+}
+
+export interface KullanilanParcaDto {
+  YedekParcaId: number;
+  KullanilanMiktar: number;
+}
+
+export interface RandevuTamamlamaDto {
+  RandevuId: number;
+  KullanilanParcalar: KullanilanParcaDto[];
+}
+
+export interface RandevuDetayDto {
+  RandevuNo: number;
+  Tarih: string;
+  MusteriBilgisi: string;
+  AracPlaka: string;
+  HizmetAdi: string;
+  ToplamTutar: number;
+  SorumluUsta: string;
+}
+
+export interface AiTalepDto {
+  MusteriSikayeti: string;
+  Plaka: string;
+  SignalRConnectionId: string;
+}
+
+export interface KrediKartiDto {
+  KartSahibiAdSoyad: string;
+  KartNumarasi: string;
+  SonKullanmaTarihi: string;
+  Cvv: string;
+}
+
+export interface ApiMesaj {
+  Mesaj?: string;
+  Hata?: string;
+  Token?: string;
+  RandevuId?: number;
+  FaturaId?: number;
+  FaturaTutari?: number;
+  DetayliHata?: string;
+}
+
+export interface AiAnalysisMessage {
+  RandevuId?: number;
+  Baslik?: string;
+  Icerik?: string;
+  raw?: string;
+}
+

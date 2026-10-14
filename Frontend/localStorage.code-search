@@ -1,0 +1,42 @@
+# Query: localStorage
+# ContextLines: 1
+
+12 sonuç - 2 dosya
+
+FrontendKodlari.txt:
+  1190    useEffect(() => {
+  1191:     const token = sessionStorage.getItem('token');
+  1192      const stored = getStoredUser() as Kullanici | null;
+
+  1207      if (!session) throw new Error('Token çözümlenemedi.');
+  1208:     sessionStorage.setItem('token', token);
+  1209:     sessionStorage.setItem('user', JSON.stringify(session));
+  1210      setUser(session);
+
+  3492  api.interceptors.request.use((config) => {
+  3493:   const token = sessionStorage.getItem('token');
+  3494    if (token && config.headers) {
+
+  3510      if (error.response?.status === 401) {
+  3511:       sessionStorage.removeItem('token');
+  3512:       sessionStorage.removeItem('user');
+  3513      }
+
+  3518  export function getStoredUser() {
+  3519:   const raw = sessionStorage.getItem('user');
+  3520    try {
+
+  3527  export function clearAuth() {
+  3528:   sessionStorage.removeItem('token');
+  3529:   sessionStorage.removeItem('user');
+  3530  }
+
+src\contexts\AuthProvider.tsx:
+  12    useEffect(() => {
+  13:     const token = sessionStorage.getItem('token');
+  14      const stored = getStoredUser() as Kullanici | null;
+
+  29      if (!session) throw new Error('Token çözümlenemedi.');
+  30:     sessionStorage.setItem('token', token);
+  31:     sessionStorage.setItem('user', JSON.stringify(session));
+  32      setUser(session);

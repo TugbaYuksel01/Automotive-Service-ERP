@@ -1,0 +1,3145 @@
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Program.cs ====  
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
+using Microsoft.OpenApi.Models;
+using OtoServis.Data;
+using OtoServis.Data.Repositories;
+using OtoServisApi.Services;
+using System.Text;
+using MassTransit;
+using OtoServis.Contracts.Events;
+using Serilog;
+
+// 1. Uygulama ayağa kalkmadan hemen önce Serilog yapılandırmasını başlatıyoruz
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("OtoServis.Worker.KaynakPlanlamaWorker", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.FromLogContext()
+    .WriteTo.Console() // Logları eski usül konsola da yazdır
+    .WriteTo.Seq("http://localhost:5341") // Logları Docker'daki Seq paneline gönder
+    .CreateLogger();
+
+try
+{
+    Log.Information("Uygulama başlatılıyor...");
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    // =======================================================
+    // 1. SERVİS KAYITLARI (DEPENDENCY INJECTION VE AYARLAR)
+    // =======================================================
+
+    // JSON Ayarları
+    builder.Services.AddControllers().AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
+    builder.Services.AddSignalR();
+
+    // Veritabanı Bağlantısı
+    builder.Services.AddDbContext<ServisDbContext>(options =>
+        options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+    // JWT Ayarları ve Kimlik Doğrulama
+    var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+    var gizliAnahtar = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
+
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            // 1. JWT Ayarları (Hatayı çözen kısım)
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = builder.Configuration["JwtSettings:Issuer"],
+                ValidAudience = builder.Configuration["JwtSettings:Audience"],
+                IssuerSigningKey = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Key"]!))
+            };
+
+            // 2. Redis Kara Liste Kontrolü (Bahsettiğim options.Events kısmı)
+            //options.Events = new JwtBearerEvents
+            //{
+            //    OnTokenValidated = async context =>
+            //    {
+            //        var cache = context.HttpContext.RequestServices.GetRequiredService<IDistributedCache>();
+            //        var rawToken = context.Request.Headers["Authorization"].ToString().Replace("Bearer ", "").Trim();
+
+            //        if (!string.IsNullOrEmpty(rawToken))
+            //        {
+            //            var isBlacklisted = await cache.GetStringAsync($"blacklist:{rawToken}");
+            //            if (!string.IsNullOrEmpty(isBlacklisted))
+            //            {
+            //                // Token Redis'te kara listedeyse isteği hemen kapıda reddet
+            //                context.Fail("Bu oturum sonlandırılmıştır. Lütfen tekrar giriş yapın.");
+            //            }
+            //        }
+            //    }
+            //};
+        });
+    builder.Services.AddAuthorization();
+
+    // Swagger ve JWT "Authorize" (Kilit) Butonu Ayarları
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(c =>
+    {
+        c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Description = "JWT Token'ınızı şu formatta girin: Bearer {token_buraya}",
+            Name = "Authorization",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
+        });
+        c.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+        });
+    });
+
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("AllowFrontend", policy =>
+        {
+            // AllowAnyOrigin YERİNE bunu kullanıyoruz. Hem her şeye izin verir, hem çökmez.
+            policy.SetIsOriginAllowed(origin => true)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); // SignalR için mecburi
+        });
+    });
+
+   
+
+
+    // Proje İçi Servisler ve Dependency Injection
+    builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+    builder.Services.AddScoped<IRandevuRepository, RandevuRepository>();
+    builder.Services.AddScoped<IAuthService, AuthService>();
+    builder.Services.AddScoped<IRandevuService, RandevuService>();
+    
+    builder.Services.AddScoped<IKullaniciService, KullaniciService>();
+    builder.Services.AddScoped<IPdfFaturaService, PdfFaturaService>();
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = builder.Configuration.GetConnectionString("Redis");
+        options.InstanceName = "OtoServis_";
+    });
+
+    builder.Services.AddMassTransit(x =>
+    {
+        x.UsingRabbitMq((context, cfg) =>
+        {
+            cfg.Host("localhost", "/", h =>
+            {
+                h.Username("guest");
+                h.Password("guest");
+            });
+        });
+    });
+
+    // Dış İstekler ve Arka Plan Görevleri
+    builder.Services.AddHttpClient();
+    builder.Services.AddHostedService<KaynakPlanlamaMotoru>();
+
+
+    // =======================================================
+    // 2. UYGULAMANIN İNŞASI VE ARA YAZILIM (MIDDLEWARE) HATTI
+    // =======================================================
+    var app = builder.Build();
+      
+
+        // Geliştirme ortamı ayarları
+        if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
+
+    app.UseHttpsRedirection();
+    app.UseCors("AllowAll");
+    app.UseStaticFiles();
+
+    app.UseRouting();
+
+    app.UseCors("AllowFrontend");
+
+    // GÜVENLİK 
+    app.UseAuthentication();
+    app.UseMiddleware<OtoServisApi.Middlewares.GlobalAuditMiddleware>();
+    app.UseAuthorization();
+    
+    app.MapControllers();
+
+    //istemcilerin bağlanacağı adres (endpoint)
+    app.MapHub<OtoServisApi.Hubs.NotificationHub>("/notificationHub");
+       
+
+    app.Run();
+
+   
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Uygulama başlatılırken kritik bir hata oluştu.");
+}
+finally
+{
+    Log.CloseAndFlush();
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\AdminController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using OtoServisApi.DTOs;
+using OtoServisApi.Services;
+
+namespace OtoServisApi.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AdminController : ControllerBase
+    {
+        private readonly IAuthService _authService;
+
+        public AdminController(IAuthService authService)
+        {
+            _authService = authService;
+        }
+
+        // --- SADECE SUPERADMIN KULLANABİLİR ---
+        [HttpPost("admin-ekle")]
+        [Authorize(Roles = "SuperAdmin")]
+        public async Task<IActionResult> AdminEkle([FromBody] PersonelEkleDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            // Güvenlik: DTO içinden gelen Rol verisini görmezden geliyoruz. 
+            // SuperAdmin bu ucu kullandığı an eklenecek kişi zorunlu "Admin" olur.
+            var sonuc = await _authService.PersonelEkleAsync(dto, "Admin");
+
+            if (!sonuc.BasariliMi) return BadRequest(new { Mesaj = sonuc.Mesaj });
+
+            return Ok(new { Mesaj = "Yeni Admin başarıyla eklendi." });
+        }
+
+        // --- ADMIN VE SUPERADMIN KULLANABİLİR ---
+        [HttpPost("personel-ekle")]
+        [Authorize(Roles = "SuperAdmin,Admin")]
+        public async Task<IActionResult> PersonelEkle([FromBody] PersonelEkleDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            // Güvenlik Kalkanı: Admin, kendi kendine SuperAdmin veya başka bir Admin ekleyemez!
+            var yasakliRoller = new List<string> { "SuperAdmin", "Admin" };
+
+            if (yasakliRoller.Any(r => r.Equals(dto.Rol, StringComparison.OrdinalIgnoreCase))) // büyük küçük harf duyarlılığını ortadan kaldırıyoruzz
+            if (yasakliRoller.Contains(dto.Rol))
+            {
+                return BadRequest(new { Mesaj = "Bu yetki seviyesinde bir personel ekleme izniniz yok." });
+            }
+
+            // Güvenlikten geçtiyse, kullanıcının belirlediği rolü ("Usta", "Vezne" vb.) servise yolla
+            var sonuc = await _authService.PersonelEkleAsync(dto, dto.Rol);
+            
+
+            if (!sonuc.BasariliMi) return BadRequest(new { Mesaj = sonuc.Mesaj });
+
+            return Ok(new { Mesaj = $"{dto.Rol} rolündeki personel başarıyla eklendi." });
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\AuthController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Distributed;
+using OtoServisApi.DTOs;
+using OtoServisApi.Services;
+using System.IdentityModel.Tokens.Jwt;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class AuthController : ControllerBase
+    {
+        private readonly IAuthService _authService;
+        private readonly IKullaniciService _kullaniciService;
+
+
+        public AuthController(IAuthService authService, IKullaniciService kullaniciService)
+        {
+            _authService = authService; // <-- HATAYI ÇÖZECEK OLAN EKSİK SATIR
+            _kullaniciService = kullaniciService;
+        }
+
+        [AllowAnonymous]
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterDto dto)
+        {
+            try
+            {
+                var sonuc = await _authService.RegisterAsync(dto);
+                return Ok(new { Mesaj = sonuc });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { Hata = ex.Message });
+            }
+        }
+
+        [AllowAnonymous]
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginDto dto)
+        {
+            try
+            {
+                var token = await _authService.LoginAsync(dto);
+                return Ok(new { Token = token });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { Hata = ex.Message });
+            }
+        }
+
+        [Authorize]
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout([FromServices] IDistributedCache cache)
+        {
+            // 1. İstekten gelen ham Bearer token'ı al
+            var rawToken = Request.Headers["Authorization"].ToString().Replace("Bearer ", "").Trim();
+            if (string.IsNullOrEmpty(rawToken))
+                return BadRequest("Token bulunamadı.");
+
+            // 2. Token'ın süresinin bitmesine kaç dakika/saat kaldığını hesapla
+            var handler = new JwtSecurityTokenHandler();
+            var jwtToken = handler.ReadJwtToken(rawToken);
+            var kalanSure = jwtToken.ValidTo - DateTime.UtcNow;
+
+            // Eğer süre zaten dolmuşsa işlem yapmaya gerek yok
+            if (kalanSure <= TimeSpan.Zero)
+                return Ok(new { Mesaj = "Oturum zaten sonlanmış." });
+
+            // 3. Token'ı kalan ömrü kadar Redis'e 'kara liste' olarak kaydet
+            var cacheKey = $"blacklist:{rawToken}";
+            var cacheOptions = new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = kalanSure
+            };
+
+            await cache.SetStringAsync(cacheKey, "revoked", cacheOptions);
+
+            return Ok(new { Mesaj = "Başarıyla çıkış yapıldı. Token geçersiz kılındı." });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("sifremi-unuttum")]
+        public async Task<IActionResult> SifremiUnuttum([FromBody] SifremiUnuttumDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var sonuc = await _authService.SifreSifirlamaKoduGonderAsync(dto);
+            return Ok(new { Mesaj = sonuc.Mesaj });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("sifre-sifirla")]
+        public async Task<IActionResult> SifreSifirla([FromBody] SifreSifirlaDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var sonuc = await _authService.YeniSifreyiKaydetAsync(dto);
+            if (!sonuc.BasariliMi)
+            {
+                return BadRequest(new { Mesaj = sonuc.Mesaj });
+            }
+
+            return Ok(new { Mesaj = sonuc.Mesaj });
+        }
+                          
+
+
+        //[Authorize] // Sadece giriş yapmış olan kullanıcılar güncelleyebilir
+        //[HttpPut("profil-guncelle")]
+        //public async Task<IActionResult> ProfilGuncelle([FromBody] ProfilGuncelleDto dto)
+        //{
+        //    if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        //    // İstek atan kullanıcının ID'sini JWT Token içinden güvenli bir şekilde çekiyoruz
+        //    var kullaniciIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+        //    if (kullaniciIdClaim == null) return Unauthorized();
+
+        //    int kullaniciId = int.Parse(kullaniciIdClaim.Value);
+
+        //    var sonuc = await _authService.ProfilGuncelleAsync(kullaniciId, dto);
+        //    if (!sonuc.BasariliMi)
+        //    {
+        //        return BadRequest(new { Mesaj = sonuc.Mesaj });
+        //    }
+
+        //    return Ok(new { Mesaj = sonuc.Mesaj });
+        //}
+
+
+        [Authorize]
+        [HttpPut("sifre-guncelle")]
+        public async Task<IActionResult> SifreGuncelle([FromBody] SifreGuncelleDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var kullaniciIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+            if (kullaniciIdClaim == null) return Unauthorized();
+
+            var sonuc = await _authService.SifreGuncelleAsync(int.Parse(kullaniciIdClaim.Value), dto);
+
+            if (!sonuc.BasariliMi)
+                return BadRequest(new { Mesaj = sonuc.Mesaj });
+
+            return Ok(new { Mesaj = sonuc.Mesaj });
+        }
+
+        [Authorize]
+        [HttpGet("profil")]
+        public async Task<IActionResult> GetProfil()
+        {
+            // 1. Token'dan kullanıcının ID'sini çekiyoruz
+            var kullaniciIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+            if (kullaniciIdClaim == null) return Unauthorized();
+
+            int kullaniciId = int.Parse(kullaniciIdClaim.Value);
+
+            // 2. Hazır olan servisi kullanıp veritabanından müşteriyi buluyoruz
+            var kullanici = await _kullaniciService.GetKullaniciBilgileriAsync(kullaniciId);
+
+            if (kullanici == null) return NotFound("Kullanıcı bulunamadı.");
+
+            // 3. Şifre gibi hassas verileri gizleyerek sadece gerekenleri Frontend'e yolluyoruz
+            return Ok(new
+            {
+                adSoyad = kullanici.AdSoyad,
+                email = kullanici.Email,
+                telefon = kullanici.Telefon
+            });
+        }
+
+
+
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\HizmetTipleriController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Distributed;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using System.Text.Json;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class HizmetTipleriController : ControllerBase
+    {
+        private readonly IRepository<HizmetTipi> _hizmetTipiRepository;
+        private readonly IDistributedCache _cache;
+
+        public HizmetTipleriController(IRepository<HizmetTipi> hizmetTipiRepository, IDistributedCache cache)
+         
+        {
+            _hizmetTipiRepository = hizmetTipiRepository;
+            _cache = cache;
+        }
+
+        [HttpGet]
+        [AllowAnonymous]
+        public async Task<ActionResult<IEnumerable<HizmetTipi>>> GetHizmetTipleri()
+        {
+            string cacheKey = "tum_hizmetler";
+
+            // 1. ADIM: Redis'e bağlanmayı DENE
+            try
+            {
+                var cachedData = await _cache.GetStringAsync(cacheKey);
+                if (!string.IsNullOrEmpty(cachedData))
+                {
+                    var jsonHizmetler = JsonSerializer.Deserialize<List<HizmetTipi>>(cachedData);
+                    return Ok(jsonHizmetler);
+                }
+            }
+            catch (Exception)
+            {
+                // Eğer Redis sunucusu kapalıysa veya çöktüyse kod buraya düşer.
+                // Hata fırlatmayı engelliyoruz ki sistem çökmesin, doğrudan SQL'e geçsin!
+               
+            }
+
+            // 2. ADIM: Redis'te yoksa VEYA Redis kapalıysa SQL Server'dan getir
+            var hizmetler = (await _hizmetTipiRepository.GetAllAsync()).ToList();
+
+            // 3. ADIM: Yeni veriyi Redis'e yazmayı DENE (Yine hata fırlatmasını engelliyoruz)
+            try
+            {
+                var cacheOptions = new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
+                };
+                await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(hizmetler), cacheOptions);
+            }
+            catch (Exception)
+            {
+                // Redis kapalıysa yazamaz, sorun değil. Kullanıcıya verisini dönmeye devam et.
+            }
+
+            return Ok(hizmetler);
+        }
+
+        [HttpPost]
+        [Authorize(Roles = "SuperAdmin,Admin")]
+        public async Task<ActionResult<HizmetTipi>> PostHizmetTipi(HizmetTipi hizmetTipi, [FromServices] IDistributedCache cache)
+        {
+            await _hizmetTipiRepository.AddAsync(hizmetTipi);
+            await _hizmetTipiRepository.SaveChangesAsync();
+
+            // ÖNBELLEĞİ BOŞALT: Yeni hizmet eklendiği için eski listeyi çöpe atıyoruz
+            await cache.RemoveAsync("tum_hizmetler");
+
+            return CreatedAtAction(nameof(GetHizmetTipleri), new { id = hizmetTipi.Id }, hizmetTipi);
+        }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\IstasyonlarController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class IstasyonlarController : ControllerBase
+    {
+        private readonly IRepository<Istasyon> _istasyonRepository;
+
+        public IstasyonlarController(IRepository<Istasyon> istasyonRepository)
+        {
+            _istasyonRepository = istasyonRepository;
+        }
+
+        [HttpGet]
+        [Authorize(Roles = "SuperAdmin, Admin, Usta")]
+        public async Task<ActionResult<IEnumerable<Istasyon>>> GetIstasyonlar()
+        {
+            var istasyonlar = await _istasyonRepository.GetAllAsync();
+            return Ok(istasyonlar);
+        }
+
+        [HttpPost]
+        [Authorize(Roles = "SuperAdmin, Admin")]
+        public async Task<ActionResult<Istasyon>> PostIstasyon(Istasyon istasyon)
+        {
+            await _istasyonRepository.AddAsync(istasyon);
+            return CreatedAtAction(nameof(GetIstasyonlar), new { id = istasyon.Id }, istasyon);
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\OdemeController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using OtoServisApi.DTOs;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using System.Security.Claims;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize] // Token'ı olan (müşteri) ödeme yapabilir
+    public class OdemeController : ControllerBase
+    {
+        private readonly IRepository<Fatura> _faturaRepository;
+        private readonly IRepository<Randevu> _randevuRepository;
+
+
+        public OdemeController(IRepository<Fatura> faturaRepository, IRepository<Randevu> randevuRepository)
+        {
+            _faturaRepository = faturaRepository;
+            _randevuRepository = randevuRepository;
+        }
+
+
+        [Authorize(Roles = "Veznedar,SuperAdmin")]
+        [HttpPost("randevu/{randevuId}/fiziksel-ode")]
+        public async Task<IActionResult> FizikselOdemeAlByRandevu(int randevuId, [FromQuery] string odemeTuru)
+        {
+            // 1. Önce faturanın var olup olmadığını kontrol ediyoruz
+            var fatura = await _faturaRepository.GetAsync(f => f.RandevuId == randevuId);
+            if (fatura == null)
+            {
+                return NotFound($"#{randevuId} numaralı randevuya ait kesilmiş bir fatura sistemde bulunamadı.");
+            }
+
+            // 2. Fatura var ama daha önce ödenmiş mi?
+            if (fatura.OdendiMi)
+            {
+                return BadRequest("Bu fatura zaten daha önce ödenmiş ve kapatılmıştır.");
+            }
+
+            fatura.OdendiMi = true;
+            fatura.OdemeTarihi = DateTime.Now;
+            fatura.OdemeYontemi = odemeTuru;
+            fatura.TahsilEdenKullaniciId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+            await _faturaRepository.UpdateAsync(fatura);
+            await _faturaRepository.SaveChangesAsync();
+
+            return Ok(new
+            {
+                Mesaj = $"#{randevuId} nolu randevunun ödemesi veznede ({odemeTuru}) olarak tahsil edildi.",
+                FaturaId = fatura.Id,
+                RandevuId = randevuId
+            });
+        }
+
+        [Authorize(Roles = "Veznedar,SuperAdmin")]
+        [HttpPut("{id}/teslim-et")]
+        public async Task<IActionResult> AraciTeslimEt(int id)
+        {
+            var randevu = await _randevuRepository.GetAsync(r => r.Id == id);
+            if (randevu == null) return NotFound("Randevu bulunamadı.");
+
+            if (randevu.Durum != RandevuDurumu.Tamamlandi)
+            {
+                return BadRequest("Usta henüz bakım/onarım işlemlerini tamamlamadı.");
+            }
+
+            var fatura = await _faturaRepository.GetAsync(f => f.RandevuId == id);
+            if (fatura == null || !fatura.OdendiMi)
+            {
+                return BadRequest("Ödeme onayı bulunamadı! Fatura tahsil edilmeden araç teslim edilemez.");
+            }
+
+            randevu.TeslimTarihi = DateTime.Now;
+            randevu.TeslimEdenKullaniciId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            randevu.Durum = RandevuDurumu.Tamamlandi; // veya RandevuDurumu.TeslimEdildi
+            await _randevuRepository.SaveChangesAsync();
+            return Ok(new
+            {
+
+                Mesaj = "Ödeme kontrolü tamamlandı. Araç ve anahtar müşteriye teslim edilebilir.",
+                RandevuId = id
+            });
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\ProfileController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using System.Security.Claims;
+using OtoServisApi.DTOs;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize] // KURAL: Token'ı olan herkes (Müşteri, Usta, Admin) girebilir
+    public class ProfilController : ControllerBase
+    {
+        private readonly IRepository<Kullanici> _kullaniciRepository;
+
+        public ProfilController(IRepository<Kullanici> kullaniciRepository)
+        {
+            _kullaniciRepository = kullaniciRepository;
+        }
+
+        [Authorize]
+        [HttpGet]
+        public async Task<IActionResult> ProfilimiGetir()
+        {
+            // Token'dan giriş yapan kişinin ID'sini güvenli şekilde alıyoruz
+            int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Id == userId);
+            if (kullanici == null) return NotFound("Kullanıcı bulunamadı.");
+
+            // Şifre Hash'ini frontende GÖNDERMİYORUZ (Güvenlik)
+            return Ok(new
+            {
+                kullanici.AdSoyad,
+                kullanici.Email,
+                kullanici.Telefon,
+                kullanici.Rol
+            });
+        }
+
+        [Authorize]
+        [HttpPut("guncelle")]
+        public async Task<IActionResult> ProfilimiGuncelle([FromBody] ProfilGuncelleDto dto)
+        {
+            int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Id == userId);
+
+            if (kullanici == null) return NotFound("Kullanıcı bulunamadı.");
+
+            // Bilgileri Güncelle
+            kullanici.AdSoyad = dto.AdSoyad;
+            kullanici.Telefon = dto.Telefon;
+            kullanici.Email = dto.Email;
+
+            // Eğer kullanıcı yeni şifre girdiyse (boş bırakmadıysa) şifreyi de hashleyip güncelle
+            if (!string.IsNullOrWhiteSpace(dto.YeniSifre))
+            {
+                kullanici.SifreHash = BCrypt.Net.BCrypt.HashPassword(dto.YeniSifre);
+            }
+
+            await _kullaniciRepository.UpdateAsync(kullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            // MİMARİ NOT: Eğer Usta'nın AdSoyad'ı değişirse, "Ustalar" tablosundaki AdSoyad da değişmeli!
+            // Gerçek bir kurumsal sistemde bunu yapmak için burada Usta tablosuna da update atabiliriz.
+
+            return Ok(new { Mesaj = "Profil bilgileriniz başarıyla güncellendi." });
+        }
+    }
+
+    
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\RandevularController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;  
+using OtoServisApi.DTOs;
+using OtoServisApi.Services;
+using System.Security.Claims; // Token içinden veri okumak için gerekli
+using MassTransit; // RabbitMQ için gerekli
+using OtoServis.Data.Contracts; // AiAnalizIstendiEvent için gerekli
+
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize] // 1. KURAL: Bu sınıftaki HİÇBİR uç noktaya yaka kartı (Token) olmadan ulaşılamaz.
+    public class RandevularController : ControllerBase
+    {
+        private readonly IRandevuService _randevuService;
+        private readonly IKullaniciService _kullaniciService;
+        private readonly IRepository<Arac> _aracRepository;
+        private readonly IRepository<Randevu> _randevuRepository;
+        private readonly IAuthService _authService;
+        private readonly IPublishEndpoint _publishEndpoint; // RabbitMQ için gerekli
+        private readonly IRepository<Kullanici> _kullaniciRepository;
+        private readonly IRepository<Usta> _ustaRepository;
+
+
+
+        public RandevularController(
+            IRandevuService randevuService,
+            IKullaniciService kullaniciService,
+            IRepository<Arac> aracRepository,
+            IRepository<Randevu> randevuRepository,
+            IAuthService authService,
+            IPublishEndpoint publishEndpoint,
+            IRepository<Kullanici> kullaniciRepository,
+            IRepository<Usta> ustaRepository
+            )
+        {
+            _randevuService = randevuService;
+   
+            _kullaniciService = kullaniciService;
+            _aracRepository = aracRepository;
+            _randevuRepository = randevuRepository;
+            _authService = authService;
+            _publishEndpoint = publishEndpoint;
+            _kullaniciRepository = kullaniciRepository;
+            _ustaRepository = ustaRepository;
+
+        }
+
+        //// GET: api/Randevular
+        //[HttpGet]
+        //public async Task<ActionResult<IEnumerable<RandevuDetayDto>>> GetRandevular()
+        //{
+        //    var randevular = await _randevuService.TumRandevulariGetirAsync();
+        //    return Ok(randevular);
+        //}
+        [Authorize(Roles = "Musteri")]
+        [HttpPost("Kayıtlı Müşteri Randevu")]
+        public async Task<IActionResult> KayitliYeniRandevu([FromBody] KayitliRandevuTalebiDto kisaDto)
+        {
+            var musteriId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
+            var guncelKullanici = await _kullaniciService.GetKullaniciBilgileriAsync(musteriId);
+
+            // --- GEÇMİŞ ZAMAN KONTROLÜ ---
+            // Gelen tarih, Türkiye saatiyle "Şu An"dan daha geride olamaz!
+            if (kisaDto.Tarih < DateTime.UtcNow.AddHours(3))
+            {
+                return BadRequest("Geçmiş bir tarihe veya saate randevu alamazsınız. Lütfen ileri bir tarih ve saat seçiniz.");
+            }
+
+            string sonMarkaModel = kisaDto.AracMarkaModel;
+            int sonUretimYili = kisaDto.AracUretimYili ?? 0;
+
+            if (string.IsNullOrEmpty(kisaDto.AracMarkaModel))
+            {
+                var kayitliAracList = await _aracRepository.GetAllAsync(a => a.Plaka == kisaDto.AracPlaka);
+                var KayitliArac = kayitliAracList.FirstOrDefault();
+                if (KayitliArac != null)
+                {
+                    sonMarkaModel = KayitliArac.MarkaModel;
+                    sonUretimYili = KayitliArac.UretimYili;
+                }
+            }
+
+            
+            var anaDto = new RandevuOlusturDto
+            {
+                MusteriId=guncelKullanici.Id,
+                MusteriAdSoyad = guncelKullanici.AdSoyad,
+                MusteriTelefon = guncelKullanici.Telefon ?? "Belirtilmemiş",
+                AracPlaka = kisaDto.AracPlaka,
+                AracMarkaModel = sonMarkaModel,
+                AracUretimYili = sonUretimYili,
+                Tarih = kisaDto.Tarih,
+                MusteriNotu = kisaDto.MusteriNotu,
+                HizmetTipiId = 1 ,
+                Email=guncelKullanici.Email
+            };
+
+            int randevuID = await _randevuService.RandevuOlusturAsync(anaDto);
+
+            if (randevuID < 0) return BadRequest("Randevu oluşturulamadı.");
+
+            // 3. İŞTE RABBITMQ PAKETİMİZİ (EVENT) HAZIRLIYORUZ
+            var aiEvent = new AiAnalizIstendiEvent
+            {
+                RandevuId = randevuID, // BÖYLECE WORKER HANGİ RANDEVUYU GÜNCELLEYECEĞİNİ BİLECEK!
+                AracPlaka = kisaDto.AracPlaka,
+                MusteriNotu = kisaDto.MusteriNotu,
+                SignalRConnectionId = kisaDto.SignalRConnectionId // Frontend'den gelen bağlantı ID'si
+            };
+
+            // 4. EVENTİ KUYRUĞA FIRLATIYORUZ (MassTransit kullanıyorsan)
+            await _publishEndpoint.Publish(aiEvent);
+
+            // 5. VE MÜŞTERİYE ANINDA CEVAP DÖNÜYORUZ! (202 Accepted)
+            return Accepted(new
+            {
+                Mesaj = $"Randevunuz başarıyla oluşturuldu (No: {randevuID}). Yapay zeka arıza notunuzu inceliyor, lütfen ekranda kalın...",
+                RandevuId = randevuID
+            });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("Misafir Randevu")]
+        public async Task<IActionResult> MisafirYeniRandevu(RandevuOlusturDto dto)
+        {
+            try
+            {
+
+
+                // 1. AuthService çağrılır. Eğer müşteri zaten kayıtlıysa burada Exception fırlayacak.
+                int musteriId = await _authService.MisafirKaydetVeyaBulAsync(dto.MusteriAdSoyad, dto.Email, dto.MusteriTelefon);
+
+                dto.MusteriId = musteriId;
+                // --- GEÇMİŞ ZAMAN KONTROLÜ ---
+                // Gelen tarih, Türkiye saatiyle "Şu An"dan daha geride olamaz!
+                if (dto.Tarih < DateTime.UtcNow.AddHours(3))
+                {
+                    return BadRequest("Geçmiş bir tarihe veya saate randevu alamazsınız. Lütfen ileri bir tarih ve saat seçiniz.");
+                }
+
+                int randevuID = await _randevuService.RandevuOlusturAsync(dto);
+
+                if (randevuID < 0)
+                {
+                    return BadRequest("Randevu oluşturulamadı. Lütfen geçerli bir tarih seçiniz.");
+                }
+
+                var aiEvent = new AiAnalizIstendiEvent
+                {
+                    RandevuId = randevuID,
+                    AracPlaka = dto.AracPlaka,
+                    MusteriNotu = dto.MusteriNotu,
+                    SignalRConnectionId = dto.SignalRConnectionId
+                };
+
+                await _publishEndpoint.Publish(aiEvent);
+
+                return Accepted(new
+                {
+                    Mesaj = $"Randevunuz başarıyla oluşturuldu (No: {randevuID}). Yapay zeka arıza notunuzu inceliyor, lütfen ekranda kalın...",
+                    RandevuId = randevuID
+                });
+            }
+            catch (Exception ex)
+            {
+                // 2. AuthService'den gelen hatayı yakalayıp 400 BadRequest olarak React'e yolluyoruz
+                return BadRequest(new { Mesaj = ex.Message });
+            }
+        }
+
+
+        [Authorize(Roles = "Musteri")]
+        [HttpGet("benim-randevularim")]
+        public async Task<IActionResult> BenimRandevularimiGetir()
+        {
+            // 1. Kimliği Token'dan Çek
+            var kullaniciIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+            if (kullaniciIdClaim == null) return Unauthorized();
+
+            int kullaniciId = int.Parse(kullaniciIdClaim.Value);
+
+            // 2. İşi Service'e Devret
+            var randevular = await _randevuService.GetMusteriRandevulariAsync(kullaniciId);
+
+            // 3. Sonucu Dön
+            if (randevular == null || !randevular.Any())
+            {
+                return Ok(new { Mesaj = "Henüz alınmış bir randevunuz bulunmamaktadır." });
+            }
+
+            return Ok(randevular);
+        }
+
+
+
+
+        // DELETE: api/Randevular/5
+        [Authorize(Roles = "SuperAdmin, Admin, Musteri")]
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteRandevu(int id)
+        {
+            var basariliMi = await _randevuService.RandevuIptalEtAsync(id);
+
+            if (!basariliMi)
+            {
+                return BadRequest("Randevu iptal edilemedi. Randevu bulunamamış veya randevuya 2 saatten az kalmış olabilir.");
+            }
+
+            return Ok("Randevunuz başarıyla iptal edildi.");
+        }
+
+        
+        // PUT: api/Randevular/5/sure-uzat
+        [Authorize(Roles = "SuperAdmin, Admin, Usta")]
+        [HttpPut("{id}/sure-uzat")]
+        public async Task<IActionResult> SureUzat(int id, [FromBody] SureUzatDto dto)
+        {
+            var basariliMi = await _randevuService.SureUzatVeArkadakileriKaydirAsync(id, dto);
+
+            if (!basariliMi)
+            {
+                return NotFound("İşlem başarısız. Randevu bulunamadı.");
+            }
+
+            return Ok("Süre başarıyla uzatıldı. Sistem olası krizleri otonom olarak çözdü (Plan A / Plan B uygulandı).");
+        }
+
+        [Authorize(Roles = "SuperAdmin, Admin, Usta")]
+        [HttpPut("{id}/basla")]
+        public async Task<IActionResult> RandevuBaslat(int id)
+        {
+            var basariliMi = await _randevuService.RandevuBaslatAsync(id);
+
+            if (!basariliMi)
+            {
+                return BadRequest("İşlem başlatılamadı. Randevu bulunamadı veya zaten işlemde/tamamlanmış.");
+            }
+
+            return Ok("Randevu işleme alındı. Usta ve istasyon için gerçek zamanlı takip başladı.");
+        }
+
+        [AllowAnonymous]
+        [HttpGet("sorgula")]
+        public async Task<IActionResult> DurumSorgula([FromQuery] int id, [FromQuery] string plaka)
+        {
+            var randevular = await _randevuRepository.GetAllAsync(
+                    r => r.Id == id && r.Arac.Plaka == plaka, // 1. Parametre: Filtremiz (Where)
+                    r => r.Arac,                              // 2. Parametre: Include 1
+                    r => r.HizmetTipi,                        // 3. Parametre: Include 2
+                    r => r.Fatura                             // 4. Parametre: Include 3
+                );
+            var randevu = randevular.FirstOrDefault();
+            if (randevu == null) return NotFound(new { Mesaj = "Randevu bulunamadı veya plaka eşleşmedi." });
+
+            return Ok(new
+            {
+                Durum = randevu.Durum,
+                AracPlaka = randevu.Arac.Plaka,
+                Tarih = randevu.Tarih,
+                HizmetAdi = randevu.HizmetTipi.Ad,
+                ToplamTutar = randevu.Fatura?.GenelToplam ?? 0
+            });
+        }
+
+
+
+
+        [Authorize(Roles = "SuperAdmin, Admin, Usta")]
+        [HttpPost("tamamla")]
+        public async Task<IActionResult> RandevuTamamla([FromBody] RandevuTamamlamaDto dto)
+        {
+            try
+            {
+                var fatura = await _randevuService.IslemiTamamlaVeFaturaKesAsync(dto);
+                return Ok(new { Mesaj = "İşlem bitti, fatura kesildi.", FaturaTutari = fatura.GenelToplam });
+            }
+            catch (Exception ex)
+            {
+                // ex.ToString() tüm InnerException'ları ve satır numaralarını JSON olarak döner
+                return BadRequest(new { DetayliHata = ex.ToString() });
+            }
+        }
+
+        public async Task<IEnumerable<Randevu>> GetUstaninGunlukRandevulariAsync(int kullaniciId)
+        {
+            // 1. Giriş yapan personelin (kullanıcının) bilgilerini alıyoruz
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Id == kullaniciId);
+            if (kullanici == null) return Enumerable.Empty<Randevu>();
+
+            // 2. Ustalar tablosunda bu kullanıcıya denk gelen ustayı buluyoruz (Esnek eşleştirme ile)
+            var ustalar = await _ustaRepository.GetAllAsync();
+            var arananIsim = kullanici.AdSoyad.Replace(" ", "").ToLower();
+
+            var usta = ustalar.FirstOrDefault(u =>
+                u.AdSoyad.Replace(" ", "").ToLower().Contains(arananIsim) ||
+                arananIsim.Contains(u.AdSoyad.Replace(" ", "").ToLower()));
+
+            if (usta == null)
+            {
+                Console.WriteLine($"[HATA] '{kullanici.AdSoyad}' isminde giriş yapıldı ama Ustalar tablosunda bulunamadı!");
+                return Enumerable.Empty<Randevu>();
+            }
+
+            // 3. İlişkili verilerle birlikte (Müşteri, Araç, Hizmet) tüm randevuları çekiyoruz
+            var tumRandevular = await _randevuRepository.GetAllAsync(null,
+                r => r.Kullanici,
+                r => r.HizmetTipi,
+                r => r.Arac
+            );
+
+            // 4. TEST MODU: TARİH FİLTRESİ TAMAMEN KALDIRILDI!
+            // Bu ustaya atanmış olan geçmiş, bugün ve gelecekteki TÜM randevuları getiriyoruz.
+            return tumRandevular
+                .Where(r => r.UstaId == usta.Id)
+                .OrderByDescending(r => r.Tarih) // Geçmişi rahat görmek için en yenileri (veya eskileri) sıraya dizdik
+                .ToList();
+        }
+
+
+            
+        
+
+
+
+        [Authorize(Roles = "SuperAdmin,Admin")]
+        [HttpGet("gunluk-tum-randevular")]
+        public async Task<IActionResult> GetGunlukTumRandevular()
+        {
+            var randevular = await _randevuService.GetGunlukTumRandevularAsync();
+
+            // Döngüyü koparmak için sadece gerekli alanları dönüyoruz
+            var sonuc = randevular.Select(r => new {
+                r.Id,
+                r.Tarih,
+                r.Durum,
+                r.MusteriNotu,
+                Arac = r.Arac != null ? new { r.Arac.Plaka, r.Arac.MarkaModel } : null,
+                Kullanici = r.Kullanici != null ? new { r.Kullanici.AdSoyad, r.Kullanici.Telefon } : null,
+                Usta = r.Usta != null ? new { r.Usta.AdSoyad } : null,
+                HizmetTipi = r.HizmetTipi != null ? new { r.HizmetTipi.Ad } : null
+            });
+
+            return Ok(sonuc);
+        }
+
+
+
+
+
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\UstalarController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+
+namespace OtoServis.Data.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class UstalarController : ControllerBase
+    {
+        private readonly IRepository<Usta> _ustaRepository;
+
+        public UstalarController(IRepository<Usta> ustaRepository)
+        {
+            _ustaRepository = ustaRepository;
+        }
+
+        [AllowAnonymous]
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<Usta>>> GetUstalar()
+        {
+            var ustalar = await _ustaRepository.GetAllAsync();
+            return Ok(ustalar);
+        }
+
+        [Authorize(Roles = "SuperAdmin, Admin")]
+        [HttpPost]
+        public async Task<ActionResult<Usta>> PostUsta(Usta usta)
+        {
+            await _ustaRepository.AddAsync(usta);
+            return CreatedAtAction(nameof(GetUstalar), new { id = usta.Id }, usta);
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Controllers\YedekParcalarController.cs ====  
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Distributed;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace OtoServisApi.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    // Sadece SuperAdmin, Admin ve yeni ekleyeceğimiz DepoSorumlusu girebilir!
+    [Authorize(Roles = "SuperAdmin,Admin,DepoSorumlusu,Usta")]
+    public class YedekParcalarController : ControllerBase
+    {
+        private readonly IRepository<YedekParca> _yedekParcaRepository;
+        private readonly IDistributedCache _cache;
+
+        public YedekParcalarController(IRepository<YedekParca> yedekParcaRepository, IDistributedCache cache)
+        {
+            _yedekParcaRepository = yedekParcaRepository;
+            _cache = cache;
+        }
+
+        [Authorize(Roles = "SuperAdmin, Admin, DepoSorumlusu, Usta")]
+        [HttpGet("tum-stoklar")]
+        public async Task<IActionResult> GetYedekParcalar()
+        {
+            string cacheKey = "tum_yedek_parcalar";
+
+            // 1. Önce Redis'e bak (Cache Hit)
+            var cachedData = await _cache.GetStringAsync(cacheKey);
+            if (!string.IsNullOrEmpty(cachedData))
+            {
+                var jsonParcalar = JsonSerializer.Deserialize<List<YedekParca>>(cachedData);
+                return Ok(jsonParcalar);
+            }
+
+            // 2. Redis'te yoksa veritabanından çek (Cache Miss)
+            var parcalar = (await _yedekParcaRepository.GetAllAsync()).ToList();
+
+            // 3. Veriyi 60 dakika geçerli olacak şekilde Redis'e yaz
+            var cacheOptions = new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(60)
+            };
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(parcalar), cacheOptions);
+
+            return Ok(parcalar);
+        }
+
+        [Authorize(Roles = "SuperAdmin, Admin, DepoSorumlusu, Usta")]
+        [HttpGet("kritik-stoklar")]
+        public async Task<IActionResult> KritikStoklariGetir()
+        {
+            // Stok miktarı, kritik seviyenin altına düşenleri bul (Ön yüzdeki kırmızı uyarı ekranı için)
+            var kritikParcalar = await _yedekParcaRepository.GetAllAsync(p => p.StokMiktari <= p.KritikStokSeviyesi);
+
+            if (!kritikParcalar.Any()) return Ok(new { Mesaj = "Harika! Kritik seviyede hiçbir parça yok." });
+
+            return Ok(kritikParcalar);
+        }
+
+        //YENİ PARÇA EKLENDİĞİNDE
+        [HttpPost]
+        [Authorize(Roles = "SuperAdmin,Admin,DepoSorumlusu")]
+        public async Task<ActionResult<YedekParca>> PostYedekParca(YedekParca yedekParca, [FromServices] IDistributedCache cache)
+        {
+            await _yedekParcaRepository.AddAsync(yedekParca);
+            await _yedekParcaRepository.SaveChangesAsync();
+
+            // Önbelleği temizle
+            await cache.RemoveAsync("tum_yedek_parcalar");
+
+            return CreatedAtAction(nameof(GetYedekParcalar), new { id = yedekParca.Id }, yedekParca);
+        }
+
+        //PARÇA/ STOK GÜNCELLENDİĞİNDE
+        [HttpPut("{id}")]
+        [Authorize(Roles = "SuperAdmin,Admin,DepoSorumlusu")]
+        public async Task<IActionResult> PutYedekParca(int id, YedekParca yedekParca, [FromServices] IDistributedCache cache)
+        {
+            if (id != yedekParca.Id) return BadRequest("ID uyuşmazlığı.");
+
+            await _yedekParcaRepository.UpdateAsync(yedekParca);
+            await _yedekParcaRepository.SaveChangesAsync();
+
+            // Güncel stok/fiyat bilgisinin yansıması için önbelleği temizle
+            await cache.RemoveAsync("tum_yedek_parcalar");
+
+            return NoContent();
+        }
+
+        //PARÇA SİLİNDİĞİNDE
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "SuperAdmin,Admin")]
+        public async Task<IActionResult> DeleteYedekParca(int id, [FromServices] IDistributedCache cache)
+        {
+            var parca = await _yedekParcaRepository.GetByIdAsync(id);
+            if (parca == null) return NotFound();
+
+            await _yedekParcaRepository.DeleteAsync(parca);
+            await _yedekParcaRepository.SaveChangesAsync();
+
+            // Silinen parça listeden düşsün diye önbelleği temizle
+            await cache.RemoveAsync("tum_yedek_parcalar");
+
+            return NoContent();
+        }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Data\ServisDbContext.cs ====  
+using Microsoft.EntityFrameworkCore;
+using OtoServis.Data.Models;
+
+
+namespace OtoServisApi.Data
+{
+
+    public class ServisDbContext : DbContext
+    {      
+        public ServisDbContext(DbContextOptions<ServisDbContext> options) : base(options)
+        {
+
+        }
+                 
+       
+        public DbSet<Usta> Ustalar { get; set; }
+        public DbSet<HizmetTipi> HizmetTipleri { get; set; }
+        public DbSet<Istasyon> Istasyonlar { get; set; }
+        public DbSet<Randevu> Randevular { get; set; }
+                
+        public DbSet<Arac> Araclar { get; set; }
+        public DbSet<YedekParca> YedekParcalar { get; set; }
+        public DbSet<RandevuParca> RandevuParcalari { get; set; }
+        public DbSet<Fatura> Faturalar { get; set; }
+
+        public DbSet<Kullanici> Kullanicilar { get; set; }
+
+        public DbSet<SistemLog> SistemLoglari { get; set; }
+
+
+        // Bu kod sayesinde SQL Server'a "Bir veriyi sildiğimde zincirleme katliam yapma, sadece o veriyi sil (veya izin verme)" demiş olduk.
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder); // Eğer Identity veya başka eklentiler varsa bu satır şarttır
+
+             // İlk Admin'i sisteme gömüyoruz
+            modelBuilder.Entity<Kullanici>().HasData(new Kullanici  // İlk adminnin dbye yansıması için Migragation yapmalıyız 
+            {
+                Id = 1,
+                AdSoyad = "Sistem Yöneticisi",
+                Email = "admin@otoservis.com",
+                Rol = "SuperAdmin",
+                // Gerçek projede "Sifre123!" değerinin BCrypt/SHA256 ile hashlenmiş halini buraya koymalısın
+                SifreHash = "$2a$11$B599TyWE.UfpdESVM/cvROCpi071XP8hyn5ARCEdsZmAz3GSL4bJy"
+            });
+
+            // Aynı telefon numarasıyla ikinci bir müşteri eklenmesini yasaklar
+            modelBuilder.Entity<Kullanici>().HasIndex(m => m.Telefon).IsUnique();
+
+            // Aynı plakayla ikinci bir araç eklenmesini yasaklar
+            modelBuilder.Entity<Arac>().HasIndex(a => a.Plaka).IsUnique();
+            // 1. Müşteri ve Araç Korumaları
+            modelBuilder.Entity<Kullanici>().HasIndex(m => m.Telefon).IsUnique();
+            modelBuilder.Entity<Arac>().HasIndex(a => a.Plaka).IsUnique();
+
+            // 2. Sabit Veri (Master Data) Korumaları
+            modelBuilder.Entity<HizmetTipi>().HasIndex(h => h.Ad).IsUnique();
+            modelBuilder.Entity<Istasyon>().HasIndex(i => i.Ad).IsUnique();
+            modelBuilder.Entity<YedekParca>().HasIndex(y => y.ParcaAdi).IsUnique();
+
+            // 3. Fatura - Randevu Bire-Bir İlişkisi (Aynı randevuya çift fatura kesilemez)
+            modelBuilder.Entity<Fatura>()
+                .HasIndex(f => f.RandevuId)
+                .IsUnique();
+
+            
+
+            // SQL'in bahsettiği UyumluHizmetTipiId döngüsünü kırıyoruz (Silmeyi kısıtla)
+            modelBuilder.Entity<YedekParca>()
+                .HasOne(y => y.UyumluHizmetTipi)
+                .WithMany(h => h.UyumluParcalar)
+                .HasForeignKey(y => y.UyumluHizmetTipiId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // İkinci bir patlama riskine karşı Randevu-Parça ilişkisini de kısıtlıyoruz
+            modelBuilder.Entity<RandevuParca>()
+                .HasOne(rp => rp.YedekParca)
+                .WithMany(y => y.RandevuParcalari)
+                .HasForeignKey(rp => rp.YedekParcaId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<RandevuParca>()
+                .HasOne(rp => rp.Randevu)
+                .WithMany(r => r.RandevuParcalari)
+                .HasForeignKey(rp => rp.RandevuId)
+                .OnDelete(DeleteBehavior.Restrict);
+        }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\AiTalepDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class AiTalepDto
+    {
+        public string MusteriSikayeti { get; set; }
+
+        // AI'ın geçmişi bulabilmesi için eklendi
+        public string Plaka { get; set; }
+
+        // Müşterinin tarayıcısından (Frontend'den) HTTP POST ile gelecek olan eşsiz ID
+        public string SignalRConnectionId { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\KayitliRandevuTalebiDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class KayitliRandevuTalebiDto
+    {
+        // Plaka her zaman zorunludur (ister listeden seçsin, ister yeni yazsın)
+        public string AracPlaka { get; set; }
+
+        // SADECE müşteri "Yeni Araç" seçeneğini kullanırsa arayüzden dolu gelir.
+        // Listeden kayıtlı aracını seçerse arayüz buraları null (boş) gönderir.
+        public string? AracMarkaModel { get; set; }
+        public int? AracUretimYili { get; set; }
+
+        public DateTime Tarih { get; set; }
+        public string MusteriNotu { get; set; }
+        public string SignalRConnectionId { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\KullanilanParcaDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class KullanilanParcaDto
+    {
+        public int YedekParcaId { get; set; }
+        public int KullanilanMiktar { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\LoginDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class LoginDto
+    {
+        public required string Email { get; set; }
+        public required string Sifre { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\PersonelEkleDto.cs ====  
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace OtoServisApi.DTOs
+{
+    public class PersonelEkleDto
+    {
+        [Required(ErrorMessage = "Ad Soyad alanı zorunludur.")]
+        [StringLength(100)]
+        public string AdSoyad { get; set; }
+
+        [Required(ErrorMessage = "E-posta alanı zorunludur.")]
+        [EmailAddress(ErrorMessage = "Geçerli bir e-posta adresi giriniz.")]
+        public string Email { get; set; }
+
+        public string? Telefon { get; set; }
+
+        [Required(ErrorMessage = "Şifre alanı zorunludur.")]
+        [MinLength(6, ErrorMessage = "Şifre en az 6 karakter olmalıdır.")]
+        public string Sifre { get; set; }
+
+        [Required(ErrorMessage = "Rol alanı zorunludur.")]
+        public string Rol { get; set; } // Sadece "Admin" veya "Usta" kabul edilecek
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\ProfilGuncelleDto.cs ====  
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace OtoServisApi.DTOs
+{
+    public class ProfilGuncelleDto
+    {
+        public string AdSoyad { get; set; }
+        public string Email { get; set; }
+        public string? Telefon { get; set; }
+        public string? YeniSifre { get; set; } // Opsiyonel
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\RandevuDetayDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class RandevuDetayDto
+    {
+        public int RandevuNo { get; set; }
+        public string Tarih { get; set; }
+        public string MusteriBilgisi { get; set; }
+        public string AracPlaka { get; set; }
+        public string HizmetAdi { get; set; }
+        public decimal ToplamTutar { get; set; }
+        public string SorumluUsta { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\RandevuOlusturDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class RandevuOlusturDto
+    {
+        // Müşteri Bilgileri
+        public int? MusteriId { get; set; } // Eğer müşteri kayıtlıysa, bu alan dolu olacak
+        public string MusteriAdSoyad { get; set; }
+        public string MusteriTelefon { get; set; }
+
+        public string Email { get; set; }
+
+        // Araç Bilgileri
+        public string AracPlaka { get; set; }
+        public string AracMarkaModel { get; set; }
+        public int AracUretimYili { get; set; }
+
+        // Randevu Bilgileri
+        public int HizmetTipiId { get; set; } // Yapay zekanın seçtiği hizmet
+        public DateTime Tarih { get; set; }
+        public string MusteriNotu { get; set; }
+
+        public string SignalRConnectionId { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\RandevuTamamlaDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class RandevuTamamlamaDto
+    {
+        public int RandevuId { get; set; }
+        public List<KullanilanParcaDto> KullanilanParcalar { get; set; } = new List<KullanilanParcaDto>();
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\RegisterDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class RegisterDto
+    {
+        public required string AdSoyad { get; set; }
+        public required string Email { get; set; }
+        public required string Sifre { get; set; }
+        public string Rol { get; set; } = "Musteri";
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\SifreGuncelleDto.cs ====  
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace OtoServisApi.DTOs
+{
+    public class SifreGuncelleDto
+    {
+        [Required(ErrorMessage = "Mevcut şifre zorunludur.")]
+        public string MevcutSifre { get; set; }
+
+        [Required(ErrorMessage = "Yeni şifre zorunludur.")]
+        [MinLength(6, ErrorMessage = "Yeni şifre en az 6 karakter olmalıdır.")]
+        public string YeniSifre { get; set; }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\SifremiUnuttumDto.cs ====  
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace OtoServisApi.DTOs
+{
+    public class SifremiUnuttumDto
+    {
+        [Required(ErrorMessage = "E-posta adresi zorunludur.")]
+        [EmailAddress]
+        public string Email { get; set; }
+    }
+
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\SifreSifirlaDto.cs ====  
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace OtoServisApi.DTOs
+{
+    public class SifreSifirlaDto
+    {
+        [Required]
+        public string Email { get; set; }
+
+        [Required]
+        public string Token { get; set; }
+
+        [Required(ErrorMessage = "Yeni şifre zorunludur.")]
+        [MinLength(6, ErrorMessage = "Şifre en az 6 karakter olmalıdır.")]
+        public string YeniSifre { get; set; }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\DTOs\SureUzatDto.cs ====  
+﻿namespace OtoServisApi.DTOs
+{
+    public class SureUzatDto
+    {
+        public int EkSureDakika { get; set; }
+        public string Sebep { get; set; } // Örn: "Paslı cıvata sökülemedi"
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Hubs\NotificationHub.cs ====  
+﻿using Microsoft.AspNetCore.SignalR;
+using System.Threading.Tasks;
+
+namespace OtoServisApi.Hubs
+{
+    // Bu sınıf, müşterilerin anlık bildirimleri dinleyeceği radyo istasyonumuzdur.
+    public class NotificationHub : Hub
+    {
+        // Müşteri sayfaya girip WebSocket'e bağlandığında tetiklenir (İsteğe bağlı loglama için)
+        public override async Task OnConnectedAsync()
+        {
+            // İleride bağlanan kişinin ConnectionId'si ile özel işlemler yapabiliriz
+            await base.OnConnectedAsync();
+        }
+
+        public override async Task OnDisconnectedAsync(Exception exception)
+        {
+            await base.OnDisconnectedAsync(exception);
+        }
+
+        // Worker servisi işi bitirdiğinde(ai analizi sonucu dış servisten geldiği zaman) dışarıdan bu metodu tetikleyecek
+        public async Task TehisSonucunuYayinla(string sonucMesaji, string connectionId)
+        {
+            if (string.IsNullOrEmpty(connectionId))
+            {
+                // Eğer ID yoksa herkese gönder (Test için veya genel duyurular için)
+                await Clients.All.SendAsync("ReceiveTehis", sonucMesaji);
+            }
+            else
+            {
+                // ID varsa, NOKTA ATIŞI sadece o müşterinin tarayıcısına fırlat!
+                await Clients.Client(connectionId).SendAsync("ReceiveTehis", sonucMesaji);
+            }
+
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Middlewares\GlobalAuditMiddleware.cs ====  
+﻿using Microsoft.AspNetCore.Http;
+using OtoServis.Data; // DbContext'inin bulunduğu namespace 
+using OtoServis.Data.Models;
+using System;
+using System.Security.Claims;
+using System.Threading.Tasks;
+
+
+namespace OtoServisApi.Middlewares
+{
+    public class GlobalAuditMiddleware
+    {
+        private readonly RequestDelegate _next;
+
+        public GlobalAuditMiddleware(RequestDelegate next)
+        {
+            _next = next;
+        }
+
+        // DbContext'i constructor'da değil, InvokeAsync içinde alıyoruz çünkü DbContext "Scoped" (istek başına) çalışır.
+        
+        public async Task InvokeAsync(HttpContext context, ServisDbContext dbContext)
+        {
+            // 1. İsteği API'nin derinliklerine (Controller'a) gönder ve cevabı (Red veya Onay) bekle
+            await _next(context);
+
+            // 2. Sadece /api/ ile başlayan gerçek istekleri logla (Swagger arayüz dosyalarını es geçmek için)
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                var statusCode = context.Response.StatusCode;
+                var metod = context.Request.Method;
+                var yol = context.Request.Path;
+
+                // Sadece GET (Okuma) isteklerini veya Hatalı/Yetkisiz (401, 403, 500 vb.) durumları logla 
+                //Başarısız POST/PUT/DELETE (Durum Kodu 400, 401, 403, 500) durum kodları bunlar ve bu eylemler de Global Middleware tarafından yakalanıp loglanır
+                // (POST, PUT, DELETE zaten başarılı olursa 1. kalkanımız olan DbContext tarafından detaylıca loglanıyor!)
+                if (metod == "GET" || statusCode >= 400)
+                {
+                    // Kullanıcı veya IP tespiti
+                    string aktifKullaniciId = "Ziyaretci IP: " + (context.Connection?.RemoteIpAddress?.ToString() ?? "Bilinmiyor");
+
+                    if (context.User?.Identity?.IsAuthenticated == true)
+                    {
+                        aktifKullaniciId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                                        ?? context.User.FindFirst("id")?.Value
+                                        ?? "Bilinmeyen Kullanici";
+                    }
+
+                    // Durum koduna göre insancıl bir işlem tipi belirle
+                    string islemTipi = statusCode switch
+                    {
+                        401 => "YETKİSİZ ERİŞİM (401)",
+                        403 => "YASAKLI ERİŞİM (403)",
+                        >= 500 => "SUNUCU HATASI (500)",
+                        _ => "SİSTEM OKUMA (GET)"
+                    };
+
+                    // Log nesnesini oluştur
+                    var yeniLog = new SistemLog
+                    {
+                        IslemTipi = islemTipi,
+                        TabloAdi = "API_ENDPOINT",
+                        Detay = $"{metod} isteği yapıldı. Hedef: {yol} | Sonuç Kodu: {statusCode}",
+                        Tarih = DateTime.UtcNow.AddHours(3),
+                        KullaniciId = aktifKullaniciId
+                    };
+
+                    dbContext.SistemLoglari.Add(yeniLog);
+                    await dbContext.SaveChangesAsync();
+                }
+            }
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net10.0\OtoServisApi.GlobalUsings.g.cs ====  
+// <auto-generated/>
+global using global::Microsoft.AspNetCore.Builder;
+global using global::Microsoft.AspNetCore.Hosting;
+global using global::Microsoft.AspNetCore.Http;
+global using global::Microsoft.AspNetCore.Routing;
+global using global::Microsoft.Extensions.Configuration;
+global using global::Microsoft.Extensions.DependencyInjection;
+global using global::Microsoft.Extensions.Hosting;
+global using global::Microsoft.Extensions.Logging;
+global using global::System;
+global using global::System.Collections.Generic;
+global using global::System.IO;
+global using global::System.Linq;
+global using global::System.Net.Http;
+global using global::System.Net.Http.Json;
+global using global::System.Threading;
+global using global::System.Threading.Tasks;
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net8.0\.NETCoreApp,Version=v8.0.AssemblyAttributes.cs ====  
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v8.0", FrameworkDisplayName = ".NET 8.0")]
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net8.0\OtoServisApi.AssemblyInfo.cs ====  
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     Bu kod araç tarafından oluşturuldu.
+//     Çalışma Zamanı Sürümü:4.0.30319.42000
+//
+//     Bu dosyada yapılacak değişiklikler yanlış davranışa neden olabilir ve
+//     kod yeniden oluşturulursa kaybolur.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: System.Reflection.AssemblyCompanyAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyTitleAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment sınıfı tarafından oluşturuldu.
+
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net8.0\OtoServisApi.GlobalUsings.g.cs ====  
+// <auto-generated/>
+global using global::Microsoft.AspNetCore.Builder;
+global using global::Microsoft.AspNetCore.Hosting;
+global using global::Microsoft.AspNetCore.Http;
+global using global::Microsoft.AspNetCore.Routing;
+global using global::Microsoft.Extensions.Configuration;
+global using global::Microsoft.Extensions.DependencyInjection;
+global using global::Microsoft.Extensions.Hosting;
+global using global::Microsoft.Extensions.Logging;
+global using global::System;
+global using global::System.Collections.Generic;
+global using global::System.IO;
+global using global::System.Linq;
+global using global::System.Net.Http;
+global using global::System.Net.Http.Json;
+global using global::System.Threading;
+global using global::System.Threading.Tasks;
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net9.0\.NETCoreApp,Version=v9.0.AssemblyAttributes.cs ====  
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v9.0", FrameworkDisplayName = ".NET 9.0")]
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net9.0\OtoServisApi.AssemblyInfo.cs ====  
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     Bu kod araç tarafından oluşturuldu.
+//     Çalışma Zamanı Sürümü:4.0.30319.42000
+//
+//     Bu dosyada yapılacak değişiklikler yanlış davranışa neden olabilir ve
+//     kod yeniden oluşturulursa kaybolur.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("6f2ae624-c2b3-48e8-b559-ec3caef9ff3a")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyTitleAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment sınıfı tarafından oluşturuldu.
+
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net9.0\OtoServisApi.GlobalUsings.g.cs ====  
+// <auto-generated/>
+global using global::Microsoft.AspNetCore.Builder;
+global using global::Microsoft.AspNetCore.Hosting;
+global using global::Microsoft.AspNetCore.Http;
+global using global::Microsoft.AspNetCore.Routing;
+global using global::Microsoft.Extensions.Configuration;
+global using global::Microsoft.Extensions.DependencyInjection;
+global using global::Microsoft.Extensions.Hosting;
+global using global::Microsoft.Extensions.Logging;
+global using global::System;
+global using global::System.Collections.Generic;
+global using global::System.IO;
+global using global::System.Linq;
+global using global::System.Net.Http;
+global using global::System.Net.Http.Json;
+global using global::System.Threading;
+global using global::System.Threading.Tasks;
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Debug\net9.0\OtoServisApi.MvcApplicationPartsAssemblyInfo.cs ====  
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     Bu kod araç tarafından oluşturuldu.
+//     Çalışma Zamanı Sürümü:4.0.30319.42000
+//
+//     Bu dosyada yapılacak değişiklikler yanlış davranışa neden olabilir ve
+//     kod yeniden oluşturulursa kaybolur.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: Microsoft.AspNetCore.Mvc.ApplicationParts.ApplicationPartAttribute("Swashbuckle.AspNetCore.SwaggerGen")]
+
+// MSBuild WriteCodeFragment sınıfı tarafından oluşturuldu.
+
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Release\net9.0\.NETCoreApp,Version=v9.0.AssemblyAttributes.cs ====  
+// <autogenerated />
+using System;
+using System.Reflection;
+[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v9.0", FrameworkDisplayName = ".NET 9.0")]
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Release\net9.0\OtoServisApi.AssemblyInfo.cs ====  
+//------------------------------------------------------------------------------
+// <auto-generated>
+//     Bu kod araç tarafından oluşturuldu.
+//     Çalışma Zamanı Sürümü:4.0.30319.42000
+//
+//     Bu dosyada yapılacak değişiklikler yanlış davranışa neden olabilir ve
+//     kod yeniden oluşturulursa kaybolur.
+// </auto-generated>
+//------------------------------------------------------------------------------
+
+using System;
+using System.Reflection;
+
+[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("6f2ae624-c2b3-48e8-b559-ec3caef9ff3a")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyTitleAttribute("OtoServisApi")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+
+// MSBuild WriteCodeFragment sınıfı tarafından oluşturuldu.
+
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\obj\Release\net9.0\OtoServisApi.GlobalUsings.g.cs ====  
+// <auto-generated/>
+global using global::Microsoft.AspNetCore.Builder;
+global using global::Microsoft.AspNetCore.Hosting;
+global using global::Microsoft.AspNetCore.Http;
+global using global::Microsoft.AspNetCore.Routing;
+global using global::Microsoft.Extensions.Configuration;
+global using global::Microsoft.Extensions.DependencyInjection;
+global using global::Microsoft.Extensions.Hosting;
+global using global::Microsoft.Extensions.Logging;
+global using global::System;
+global using global::System.Collections.Generic;
+global using global::System.IO;
+global using global::System.Linq;
+global using global::System.Net.Http;
+global using global::System.Net.Http.Json;
+global using global::System.Threading;
+global using global::System.Threading.Tasks;
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\AuthService.cs ====  
+﻿using BCrypt.Net; // Şifre hashleme için popüler bir kütüphane (NuGet: BCrypt.Net-Next)
+using MassTransit;
+using Microsoft.IdentityModel.Tokens;
+using OtoServis.Data.Contracts;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using OtoServisApi.DTOs;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+namespace OtoServisApi.Services
+{
+    public class AuthService : IAuthService
+    {
+        private readonly IRepository<Kullanici> _kullaniciRepository;
+        private readonly IConfiguration _configuration;
+        
+        private readonly IPublishEndpoint _publishEndpoint; // Mail servisi yerine RabbitMQ geldi
+        public AuthService(
+            IRepository<Kullanici> kullaniciRepository,
+            IConfiguration configuration,
+           
+            IPublishEndpoint publishEndpoint
+            )
+        {
+            _kullaniciRepository = kullaniciRepository;
+            _configuration = configuration;
+            
+            _publishEndpoint = publishEndpoint;
+        }
+
+        public async Task<string> RegisterAsync(RegisterDto dto)
+        {
+            // 1. Bu e-postayla daha önce bir kayıt var mı? (Misafir de olabilir, müşteri de)
+            var mevcutKullanici = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email);
+
+            if (mevcutKullanici != null)
+            {
+                // EĞER DAHA ÖNCE MİSAFİR OLARAK GELMİŞSE: Yeni satır açma, üstüne yaz!
+                if (mevcutKullanici.Rol == "Misafir" || mevcutKullanici.Rol == "misafir" || string.IsNullOrEmpty(mevcutKullanici.SifreHash))
+                {
+                    mevcutKullanici.AdSoyad = dto.AdSoyad; 
+                    mevcutKullanici.SifreHash = BCrypt.Net.BCrypt.HashPassword(dto.Sifre);
+                    mevcutKullanici.Rol = "Musteri";
+
+                    await _kullaniciRepository.UpdateAsync(mevcutKullanici);
+                    await _kullaniciRepository.SaveChangesAsync();
+                    return "Misafir kaydınız kalıcı müşteri hesabına dönüştürüldü.";
+                }
+
+                throw new Exception("Bu e-posta adresi ile zaten kayıtlı bir hesap bulunuyor.");
+            }
+
+            // 2. Hiç yoksa normal yeni kayıt aç
+            var sifreHash = BCrypt.Net.BCrypt.HashPassword(dto.Sifre);
+            var yeniKullanici = new Kullanici
+            {
+                AdSoyad = dto.AdSoyad,
+                Email = dto.Email,
+                SifreHash = sifreHash,
+                Rol = dto.Rol
+            };
+
+            await _kullaniciRepository.AddAsync(yeniKullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            return "Kayıt işlemi başarıyla tamamlandı.";
+        }
+
+        public async Task<string> LoginAsync(LoginDto dto)
+        {
+            // KESİN ÇÖZÜM: E-postası eşleşen VEEEE Şifresi boş OLMAYAN (Gerçek) hesabı getir!
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email && k.SifreHash != null);
+
+            if (kullanici == null || !BCrypt.Net.BCrypt.Verify(dto.Sifre, kullanici.SifreHash))
+                throw new Exception("E-posta adresi veya şifre hatalı.");
+
+            return TokenUret(kullanici);
+        }
+
+        public async Task<int> MisafirKaydetVeyaBulAsync(string adSoyad, string email, string telefon)
+        {
+            // 1. SORGULAMA: Veritabanında bu telefon numarasına VEYA e-postaya sahip biri var mı?
+            var mevcutKullanicilar = await _kullaniciRepository.GetAllAsync(
+                k => k.Telefon == telefon || k.Email == email);
+
+            var musteri = mevcutKullanicilar.FirstOrDefault();
+
+            // 2. BULUNDU DURUMU (Eski misafir veya zaten kayıtlı bir müşteri)
+            if (musteri != null)
+            {
+                // GÜVENLİK KALKANI: Bulunan kişi Misafir DEĞİLSE (Müşteri, Usta, Admin vs. ise) hata fırlat
+                if (musteri.Rol != "Misafir" && musteri.Rol != "misafir")
+                {
+                    throw new Exception("Bu e-posta adresiyle kayıtlı bir hesabınız bulunuyor. Lütfen önce giriş yapınız.");
+                }
+
+                // Eğer rolü cidden misafirse, eski ID'sini ver ki yeni randevu da onun üstüne yazılsın
+                return musteri.Id;
+            }
+
+            // 3. BULUNAMADI DURUMU (Sisteme tamamen yabancı, ilk defa gelen kişi)
+            var yeniMisafir = new Kullanici
+            {
+                AdSoyad = adSoyad,
+                Telefon = telefon,
+                Email = email,
+                Rol = "Misafir", // Normal müşteri hesabından ayırmak için rolü Misafir yapıyoruz
+                SifreHash = null // Şifre null kalıyor çünkü bu kişi sisteme bilinçli bir "Kayıt Ol" işlemi yapmadı
+            };
+
+            // 4. KAYIT İŞLEMİ: Yeni misafiri veritabanına ekle
+            await _kullaniciRepository.AddAsync(yeniMisafir);
+            _kullaniciRepository.SaveChangesAsync();
+
+            // 5. YENİ ID'Yİ DÖNDÜR: Veritabanı tarafından atanan taze ID'yi Controller'a yolluyoruz.
+            return yeniMisafir.Id;
+        }
+
+
+
+                
+
+        public async Task<(bool BasariliMi, string Mesaj)> PersonelEkleAsync(PersonelEkleDto dto, string atanacakRol)
+        {
+            // 1. E-Posta Tekrarı Kontrolü
+            var mevcutKullanici = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email);
+            if (mevcutKullanici != null)
+            {
+                return (false, "Bu e-posta adresiyle kayıtlı bir kullanıcı zaten var.");
+            }
+
+            // 2. Şifreyi Hashleme
+            string hashliSifre = BCrypt.Net.BCrypt.HashPassword(dto.Sifre);
+
+            // 3. Yeni Entity'yi Oluşturma
+            var yeniPersonel = new Kullanici
+            {
+                AdSoyad = dto.AdSoyad,
+                Email = dto.Email,
+                Telefon = dto.Telefon,
+                SifreHash = hashliSifre,
+                Rol = atanacakRol // Controller'dan onaylanıp gelen güvenli rol
+            };
+
+            // 4. Veritabanına Kaydetme
+            await _kullaniciRepository.AddAsync(yeniPersonel);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            return (true, $"{atanacakRol} rolündeki personel başarıyla oluşturuldu.");
+        }
+
+
+
+        public async Task<(bool BasariliMi, string Mesaj)> SifreSifirlamaKoduGonderAsync(SifremiUnuttumDto dto)
+        {
+            // KESİN ÇÖZÜM: Şifresi olan gerçek hesabı bul
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email && k.SifreHash != null );
+
+            if (kullanici == null)
+            {
+                // Eğer o maille sadece Misafir varsa veya hiç yoksa
+                return (false, "Bu e-posta adresiyle kayıtlı şifreli bir hesabınız bulunmuyor. Lütfen önce 'Kayıt Ol' sayfasından hesabınızı oluşturun.");
+            }
+
+            // Kırılmaz bir GUID (Token) üretiyoruz
+            string resetToken = Guid.NewGuid().ToString();
+
+            kullanici.SifreSifirlamaKodu = resetToken;
+            kullanici.SifreSifirlamaKoduBitis = DateTime.Now.AddMinutes(15);
+
+            await _kullaniciRepository.UpdateAsync(kullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            string frontendSifirlamaLinki = $"http://localhost:5173/sifre-sifirla?token={Uri.EscapeDataString(resetToken)}&email={Uri.EscapeDataString(kullanici.Email)}";
+
+            string mailIcerik = $"<h2>Şifre Sıfırlama Talebi</h2>" +
+                                $"<p>Yeni şifrenizi belirlemek için aşağıdaki bağlantıya tıklayınız:</p>" +
+                                $"<a href='{frontendSifirlamaLinki}' style='padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; display: inline-block;'>Şifremi Sıfırla</a>" +
+                                $"<br><br><p>Bu bağlantı 15 dakika sonra geçerliliğini yitirecektir.</p>";
+
+            var mailEvent = new SifreSifirlamaIstendiEvent
+            {
+                AliciEmail = kullanici.Email,
+                Konu = "Oto Servis - Şifre Sıfırlama Bağlantısı",
+                HtmlIcerik = mailIcerik
+            };
+
+            await _publishEndpoint.Publish(mailEvent);
+
+            return (true, "Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.");
+        }
+
+
+
+
+        public async Task<(bool BasariliMi, string Mesaj)> YeniSifreyiKaydetAsync(SifreSifirlaDto dto)
+        {
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email);
+
+            if (kullanici == null || kullanici.SifreSifirlamaKodu != dto.Token)
+            {
+                return (false, "Geçersiz e-posta adresi veya sıfırlama kodu.");
+            }
+
+            if (kullanici.SifreSifirlamaKoduBitis < DateTime.Now)
+            {
+                return (false, "Sıfırlama kodunun süresi dolmuş. Lütfen tekrar talep ediniz.");
+            }
+
+            // Kod doğru ve süresi geçmemiş! Şifreyi BCrypt ile eziyoruz
+            kullanici.SifreHash = BCrypt.Net.BCrypt.HashPassword(dto.YeniSifre);
+
+            // Güvenlik için kullanılmış kodu temizliyoruz
+            kullanici.SifreSifirlamaKodu = null;
+            kullanici.SifreSifirlamaKoduBitis = null;
+
+            await _kullaniciRepository.UpdateAsync(kullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            return (true, "Şifreniz başarıyla güncellendi. Yeni şifrenizle giriş yapabilirsiniz.");
+        }
+
+
+
+        private string TokenUret(Kullanici kullanici)
+        {
+            var jwtSettings = _configuration.GetSection("JwtSettings");
+            var gizliAnahtar = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]));
+            var imzaKredisi = new SigningCredentials(gizliAnahtar, SecurityAlgorithms.HmacSha256);
+
+            // Token'ın içine gömülecek kimlik bilgileri (Yaka Kartı detayları)
+            // AuthService.cs içindeki TokenUret metodu
+            var claims = new[]
+            {
+                // Sadece değişmeyen statik kimlik ve yetki bilgileri
+                new Claim(ClaimTypes.NameIdentifier, kullanici.Id.ToString()),
+                new Claim(ClaimTypes.Role, kullanici.Rol)
+            };
+
+            var token = new JwtSecurityToken(
+                issuer: jwtSettings["Issuer"],
+                audience: jwtSettings["Audience"],
+                claims: claims,
+                expires: DateTime.Now.AddHours(3), // Token 3 saat geçerli olsun
+                signingCredentials: imzaKredisi
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+
+        public async Task<Kullanici> GetProfilBilgileriAsync(int kullaniciId)
+        {
+            return await _kullaniciRepository.GetAsync(k => k.Id == kullaniciId);
+        }
+
+        public async Task<(bool BasariliMi, string Mesaj)> ProfilGuncelleAsync(int kullaniciId, ProfilGuncelleDto dto)
+        {
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Id == kullaniciId);
+            if (kullanici == null)
+                return (false, "Kullanıcı bulunamadı.");
+
+            // E-posta başkası tarafından kullanılıyor mu kontrolü
+            var emailKontrol = await _kullaniciRepository.GetAsync(k => k.Email == dto.Email && k.Id != kullaniciId);
+            if (emailKontrol != null)
+                return (false, "Bu e-posta adresi başka bir kullanıcı tarafından kullanılmaktadır.");
+
+            // Telefon başkası tarafından kullanılıyor mu kontrolü (Eğer telefon girildiyse)
+            if (!string.IsNullOrEmpty(dto.Telefon))
+            {
+                var telKontrol = await _kullaniciRepository.GetAsync(k => k.Telefon == dto.Telefon && k.Id != kullaniciId);
+                if (telKontrol != null)
+                    return (false, "Bu telefon numarası başka bir kullanıcı tarafından kullanılmaktadır.");
+            }
+
+            // Bilgileri güncelle
+            kullanici.AdSoyad = dto.AdSoyad;
+            kullanici.Email = dto.Email;
+            kullanici.Telefon = dto.Telefon;
+
+            await _kullaniciRepository.UpdateAsync(kullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            return (true, "Profil bilgileriniz başarıyla güncellendi.");
+        }
+
+        public async Task<(bool BasariliMi, string Mesaj)> SifreGuncelleAsync(int kullaniciId, SifreGuncelleDto dto)
+        {
+            // 1. Kullanıcıyı bul
+            var kullanici = await _kullaniciRepository.GetAsync(k => k.Id == kullaniciId);
+            if (kullanici == null) return (false, "Kullanıcı bulunamadı.");
+
+            // 2. Mevcut şifreyi doğrula
+            if (!BCrypt.Net.BCrypt.Verify(dto.MevcutSifre, kullanici.SifreHash))
+            {
+                return (false, "Mevcut şifrenizi yanlış girdiniz.");
+            }
+
+            // 3. Yeni şifreyi hashle ve kaydet
+            kullanici.SifreHash = BCrypt.Net.BCrypt.HashPassword(dto.YeniSifre);
+            await _kullaniciRepository.UpdateAsync(kullanici);
+            await _kullaniciRepository.SaveChangesAsync();
+
+            return (true, "Şifreniz başarıyla güncellendi.");
+        }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\IAuthService.cs ====  
+﻿using OtoServisApi.DTOs;
+
+namespace OtoServisApi.Services
+{
+    public interface IAuthService
+    {
+        Task<string> RegisterAsync(RegisterDto dto);
+        Task<string> LoginAsync(LoginDto dto);
+        Task<int> MisafirKaydetVeyaBulAsync(string adSoyad, string email, string telefon);
+        Task<(bool BasariliMi, string Mesaj)> SifreSifirlamaKoduGonderAsync(SifremiUnuttumDto dto);
+        Task<(bool BasariliMi, string Mesaj)> YeniSifreyiKaydetAsync(SifreSifirlaDto dto);
+        Task<(bool BasariliMi, string Mesaj)> PersonelEkleAsync(PersonelEkleDto dto, string atanacakRol);
+
+        Task<OtoServis.Data.Models.Kullanici> GetProfilBilgileriAsync(int kullaniciId);
+        Task<(bool BasariliMi, string Mesaj)> ProfilGuncelleAsync(int kullaniciId, ProfilGuncelleDto dto);
+
+        Task<(bool BasariliMi, string Mesaj)> SifreGuncelleAsync(int kullaniciId, SifreGuncelleDto dto);
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\IKullaniciService.cs ====  
+﻿using OtoServis.Data.Models;
+
+namespace OtoServisApi.Services
+{
+    public interface IKullaniciService
+    {
+        Task<Kullanici> GetKullaniciBilgileriAsync(int id);
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\IPdfFaturaService.cs ====  
+﻿using OtoServis.Data.Models;
+
+namespace OtoServisApi.Services
+{
+    public interface IPdfFaturaService
+    {
+        // Geriye oluşturulan PDF'in diskteki dosya yolunu (string) dönecek
+        Task<string> FaturaUretVeKaydetAsync(Fatura faturaDetayi, Randevu randevu, List<YedekParca> kullanilanParcalar);
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\IRandevuService.cs ====  
+﻿using OtoServisApi.DTOs;
+using OtoServis.Data.Models;
+
+
+namespace OtoServisApi.Services
+{
+    public interface IRandevuService
+    {
+        Task<IEnumerable<RandevuDetayDto>> TumRandevulariGetirAsync();
+
+        // Temel İşlem
+
+        Task<int> RandevuOlusturAsync(RandevuOlusturDto dto);
+
+        // Yeni İş Kuralları İçin Metotlar
+        Task<bool> RandevuIptalEtAsync(int randevuId);
+
+        Task<IEnumerable<Randevu>> GetMusteriRandevulariAsync(int musteriId);
+        Task<bool> RandevuTamamlaAsync(int randevuId);
+
+        Task<bool> SureUzatVeArkadakileriKaydirAsync(int randevuId, SureUzatDto dto);
+
+        Task<bool> RandevuBaslatAsync(int randevuId);
+        Task<Fatura> IslemiTamamlaVeFaturaKesAsync(RandevuTamamlamaDto dto);
+        Task<IEnumerable<Randevu>> GetUstaninGunlukRandevulariAsync(int ustaId);
+        Task<IEnumerable<Randevu>> GetGunlukTumRandevularAsync();
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\KaynakPlanlamaMotoru.cs ====  
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+
+namespace OtoServisApi.Services
+{
+    public class KaynakPlanlamaMotoru : BackgroundService
+    {
+        // Arka plan servisleri sürekli çalıştığı (Singleton) için, 
+        // veritabanı gibi anlık (Scoped) servislere ulaşmak adına bir fabrika kullanmalıyız.
+        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILogger<KaynakPlanlamaMotoru> _logger;
+
+        public KaynakPlanlamaMotoru(IServiceScopeFactory scopeFactory, ILogger<KaynakPlanlamaMotoru> logger)
+        {
+            _scopeFactory = scopeFactory;
+            _logger = logger;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("Kaynak Planlama Motoru çalışmaya başladı...");
+
+            // API ayakta kaldığı sürece bu döngü çalışmaya devam eder
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await PlanlamaYapAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Planlama motorunda bir hata oluştu.");
+                }
+
+                // Motor havuzu çok yormamak için her 1 dakikada (60.000 ms) bir çalışır. 
+                // Test için bu süreyi 10000 (10 saniye) yapabilirsin.
+                await Task.Delay(60000, stoppingToken);
+            }
+        }
+
+        private async Task PlanlamaYapAsync()
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var randevuRepo = scope.ServiceProvider.GetRequiredService<IRepository<Randevu>>();
+            var ustaRepo = scope.ServiceProvider.GetRequiredService<IRepository<Usta>>();
+            var istasyonRepo = scope.ServiceProvider.GetRequiredService<IRepository<Istasyon>>();
+            var hizmetTipiRepo = scope.ServiceProvider.GetRequiredService<IRepository<HizmetTipi>>();
+
+            var tumRandevular = (await randevuRepo.GetAllAsync()).ToList();
+
+            // Hizmet tiplerinin usta ve lift sürelerini sözlük olarak hafızaya alıyoruz
+            var hizmetUstaSureleri = (await hizmetTipiRepo.GetAllAsync())
+                .ToDictionary(h => h.Id, h => h.UstaSureDakika > 0 ? h.UstaSureDakika : 30);
+
+            var hizmetLiftSureleri = (await hizmetTipiRepo.GetAllAsync())
+                .ToDictionary(h => h.Id, h => h.LiftSureDakika > 0 ? h.LiftSureDakika : 60);
+
+            // 1. BEKLEYENLERİ BUL: "TamamlandiMi" yerine "Durum" kontrolü geldi
+            var bekleyenRandevular = tumRandevular
+                .Where(r => (r.UstaId == null || r.IstasyonId == null)
+                         && r.Durum == RandevuDurumu.Bekliyor
+                         && r.Tarih > DateTime.Now)
+                .OrderByDescending(r => r.AcilMi ? 1 : 0)
+                .ThenBy(r => r.Tarih)
+                .ToList();
+
+            
+            var ustalar = await ustaRepo.GetAllAsync();
+            var istasyonlar = await istasyonRepo.GetAllAsync();
+
+            
+            foreach (var randevu in bekleyenRandevular)
+            {
+                   
+                    int ustaSure = hizmetUstaSureleri.ContainsKey(randevu.HizmetTipiId) ? hizmetUstaSureleri[randevu.HizmetTipiId] : 30;
+                    int liftSure = hizmetLiftSureleri.ContainsKey(randevu.HizmetTipiId) ? hizmetLiftSureleri[randevu.HizmetTipiId] : 60;
+
+                    DateTime yeniBaslangic = randevu.Tarih;
+                    DateTime yeniUstaBitis = randevu.Tarih.AddMinutes(ustaSure);
+                    DateTime yeniLiftBitis = randevu.Tarih.AddMinutes(liftSure);
+
+                    // --- USTA İÇİN DİNAMİK ZAMAN KESİŞİM KONTROLÜ ---
+                    var doluUstaIdleri = tumRandevular
+                        .Where(r => r.UstaId != null && (r.Durum == RandevuDurumu.Bekliyor || r.Durum == RandevuDurumu.Islemde))
+                        .Where(r =>
+                        {
+                            int mevcutUstaSure = hizmetUstaSureleri.ContainsKey(r.HizmetTipiId) ? hizmetUstaSureleri[r.HizmetTipiId] : 30;
+
+                            // DİNAMİZM BURADA: İşleme başlanmışsa gerçek başlama saatini baz al, henüz başlanmamışsa planlananı!
+                            DateTime mevcutBaslangic = r.GerceklesenBaslangic ?? r.Tarih;
+                            DateTime mevcutUstaBitis = mevcutBaslangic.AddMinutes(mevcutUstaSure);
+
+                            return yeniBaslangic < mevcutUstaBitis && mevcutBaslangic < yeniUstaBitis;
+                        })
+                        .Select(r => r.UstaId.Value)
+                        .ToList();
+
+                    // --- LİFT İÇİN DİNAMİK ZAMAN KESİŞİM KONTROLÜ ---
+                    var doluIstasyonIdleri = tumRandevular
+                        .Where(r => r.IstasyonId != null && (r.Durum == RandevuDurumu.Bekliyor || r.Durum == RandevuDurumu.Islemde))
+                        .Where(r =>
+                        {
+                            int mevcutLiftSure = hizmetLiftSureleri.ContainsKey(r.HizmetTipiId) ? hizmetLiftSureleri[r.HizmetTipiId] : 60;
+
+                            // DİNAMİZM BURADA: İşleme başlanmışsa gerçek başlama saatini baz al, henüz başlanmamışsa planlananı!
+                            DateTime mevcutBaslangic = r.GerceklesenBaslangic ?? r.Tarih;
+                            DateTime mevcutLiftBitis = mevcutBaslangic.AddMinutes(mevcutLiftSure);
+
+                            return yeniBaslangic < mevcutLiftBitis && mevcutBaslangic < yeniLiftBitis;
+                        })
+                        .Select(r => r.IstasyonId.Value)
+                        .ToList();
+
+                    //ustanın  uzmanlığına da bakıyoruz:
+                    var uygunUsta = ustalar.FirstOrDefault(u =>
+                        u.UzmanlikAlani == randevu.HizmetTipi.GerekenUzmanlik &&
+                        !doluUstaIdleri.Contains(u.Id)
+                    );
+                    var uygunIstasyon = istasyonlar.FirstOrDefault(i => !doluIstasyonIdleri.Contains(i.Id) && i.MusaitMi);
+
+                    if (uygunUsta != null && uygunIstasyon != null)
+                    {
+                        randevu.UstaId = uygunUsta.Id;
+                        randevu.IstasyonId = uygunIstasyon.Id;
+
+                        await randevuRepo.UpdateAsync(randevu);
+                    await randevuRepo.SaveChangesAsync();
+
+                    _logger.LogInformation($"[DİNAMİK ATAMA] Randevu: {randevu.Id} | Usta Süresi: {ustaSure} dk | Usta: {uygunUsta.AdSoyad} | İstasyon: {uygunIstasyon.Ad}");
+                    }
+                
+            }
+
+            // --- TRAFİK POLİSİ (YÜK DENGELEME - LOAD BALANCING) SİSTEMİ ---
+
+            // 1. Saati geldiği/geçtiği halde HALA bekleyen randevuları bul
+            var gecikenRandevular = tumRandevular
+                .Where(r => r.UstaId != null
+                         && r.Durum == RandevuDurumu.Bekliyor
+                         && r.Tarih <= DateTime.Now.AddMinutes(60)) // Saati gelmiş veya max 5 dk kalmış
+                .ToList();
+
+            // 2. ŞU AN dükkanda aktif olarak çalışan (Islemde) ustaların ID'lerini bir List<int> olarak topla
+            var anlikDoluUstaIdleri = tumRandevular
+                .Where(r => r.Durum == RandevuDurumu.Islemde && r.UstaId != null)
+                .Select(r => r.UstaId.Value)
+                .Distinct()
+                .ToList();
+
+            foreach (var geciken in gecikenRandevular)
+            {
+                // Atanan usta şu an BASTA DEĞİLSE (anlık dolu ustalar listesindeyse) kriz var demektir!
+                bool atananUstaMesgulMu = anlikDoluUstaIdleri.Contains(geciken.UstaId.Value);
+
+                if (atananUstaMesgulMu)
+                {
+                    // Atanan usta meşgul! Dükkanda anlık dolu listesinde OLMAYAN boş bir "Kurtarıcı" usta var mı?
+                    var kurtariciUsta = ustalar.FirstOrDefault(u => !anlikDoluUstaIdleri.Contains(u.Id));
+
+                    if (kurtariciUsta != null)
+                    {
+                        // Aracı meşgul ustadan alıp boş ustaya kaydır (Trafik Polisi Müdahalesi)
+                        var eskiUstaAd = ustalar.First(u => u.Id == geciken.UstaId).AdSoyad;
+
+                        geciken.UstaId = kurtariciUsta.Id;
+                        await randevuRepo.UpdateAsync(geciken);
+                        await randevuRepo.SaveChangesAsync();
+
+                        // Kurtarıcı ustayı anında "dolu" listesine ekle ki aynı saniye içinde ona iki iş birden atamasın
+                        anlikDoluUstaIdleri.Add(kurtariciUsta.Id);
+
+                        _logger.LogWarning($"[TRAFİK POLİSİ] Randevu {geciken.Id} saati geldiğinde {eskiUstaAd} meşgul olduğu için araç {kurtariciUsta.AdSoyad} adlı ustaya devredildi!");
+                    }
+                }
+            }
+
+
+        }
+
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\KullaniciService.cs ====  
+﻿using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+
+namespace OtoServisApi.Services
+{
+    public class KullaniciService : IKullaniciService
+    {
+        private readonly IRepository<Kullanici> _kullaniciRepository;
+
+        public KullaniciService(IRepository<Kullanici> kullaniciRepository)
+        {
+            _kullaniciRepository = kullaniciRepository;
+        }
+
+        public async Task<Kullanici> GetKullaniciBilgileriAsync(int id)
+        {
+            // İş kuralları buraya yazılabilir (Örn: null ise hata fırlat vb.)
+            return await _kullaniciRepository.GetAsync(k => k.Id == id);
+        }
+    }
+} 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\PdfFaturaService.cs ====  
+﻿using OtoServis.Data.Models;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
+
+namespace OtoServisApi.Services
+{
+    public class PdfFaturaService : IPdfFaturaService
+    {
+        public PdfFaturaService()
+        {
+            // QuestPDF Community lisansıyla çalıştığımızı sisteme bildiriyoruz
+            QuestPDF.Settings.License = LicenseType.Community;
+            QuestPDF.Settings.UseSystemFonts = true; // Sisteme yüklü Arial vb. fontları kullanmasına izin ver
+        }
+
+        public async Task<string> FaturaUretVeKaydetAsync(Fatura fatura, Randevu randevu, List<YedekParca> kullanilanParcalar)
+        {
+            // 1. PDF'in kaydedileceği klasörü oluştur (Proje içinde "Invoices" klasörü)
+            string klasorYolu = Path.Combine(Directory.GetCurrentDirectory(), "Invoices");
+            if (!Directory.Exists(klasorYolu))
+            {
+                Directory.CreateDirectory(klasorYolu);
+            }
+
+            // Örn Dosya Adı: Fatura_35ABC123_20261008.pdf
+            string dosyaAdi = $"Fatura_{randevu.Arac?.Plaka}_{DateTime.Now:yyyyMMdd_HHmm}.pdf";
+            string tamDosyaYolu = Path.Combine(klasorYolu, dosyaAdi);
+
+            // 2. QuestPDF ile Fatura Çizimi
+            var belge = Document.Create(container =>
+            {
+                container.Page(page =>
+                {
+                    page.Size(PageSizes.A4);
+                    page.Margin(2, Unit.Centimetre);
+                    page.PageColor(Colors.White);
+                    page.DefaultTextStyle(x => x.FontSize(11).FontFamily("Lato"));
+                    // ÜST BİLGİ (HEADER)
+                    page.Header().Row(row =>
+                    {
+                        row.RelativeItem().Column(col =>
+                        {
+                            col.Item().Text("OTO SERVİS PRO").FontSize(24).SemiBold().FontColor(Colors.Blue.Darken2);
+                            col.Item().Text("Sanayi Sitesi No: 42, İzmir").FontSize(10);
+                            col.Item().Text("info@otoservispro.com").FontSize(10);
+                        });
+
+                        row.ConstantItem(100).AlignRight().Column(col =>
+                        {
+                            col.Item().Text($"Fatura No: #{fatura.Id}").Bold();
+                            col.Item().Text($"Tarih: {fatura.KesimTarihi:dd.MM.yyyy}");
+                        });
+                    });
+
+                    // ORTA GÖVDE (MÜŞTERİ VE ARAÇ BİLGİLERİ)
+                    page.Content().PaddingVertical(1, Unit.Centimetre).Column(col =>
+                    {
+                        col.Item().PaddingBottom(10).Row(row =>
+                        {
+                            row.RelativeItem().Column(c =>
+                            {
+                                c.Item().Text("Müşteri Bilgileri:").SemiBold().Underline();
+                                c.Item().Text(randevu.Kullanici?.AdSoyad ?? "Bilinmeyen Müşteri");
+                                c.Item().Text(randevu.Kullanici?.Telefon ?? "");
+                            });
+
+                            row.RelativeItem().Column(c =>
+                            {
+                                c.Item().Text("Araç Bilgileri:").SemiBold().Underline();
+                                c.Item().Text($"Plaka: {randevu.Arac?.Plaka}");
+                                c.Item().Text($"Model: {randevu.Arac?.UretimYili} {randevu.Arac?.MarkaModel}");
+                                c.Item().Text($"İşlem: {randevu.HizmetTipi?.Ad}");
+                            });
+                        });
+
+                        // FATURA TABLOSU (KALEMLER)
+                        col.Item().Table(table =>
+                        {
+                            // Sütun yapılandırması
+                            table.ColumnsDefinition(columns =>
+                            {
+                                columns.ConstantColumn(30); // Sıra
+                                columns.RelativeColumn();   // Ürün/Hizmet Adı
+                                columns.ConstantColumn(80); // Miktar
+                                columns.ConstantColumn(80); // Fiyat
+                                columns.ConstantColumn(80); // Toplam
+                            });
+
+                            // Tablo Başlıkları
+                            table.Header(header =>
+                            {
+                                header.Cell().BorderBottom(1).PaddingBottom(5).Text("#");
+                                header.Cell().BorderBottom(1).PaddingBottom(5).Text("Açıklama");
+                                header.Cell().BorderBottom(1).AlignRight().PaddingBottom(5).Text("Miktar");
+                                header.Cell().BorderBottom(1).AlignRight().PaddingBottom(5).Text("Birim Fiyat");
+                                header.Cell().BorderBottom(1).AlignRight().PaddingBottom(5).Text("Toplam");
+                            });
+
+                            // 1. Satır: İşçilik Ücreti
+                            table.Cell().PaddingVertical(5).Text("1");
+                            table.Cell().PaddingVertical(5).Text($"{randevu.HizmetTipi?.Ad} (İşçilik)");
+                            table.Cell().AlignRight().PaddingVertical(5).Text("1");
+                            table.Cell().AlignRight().PaddingVertical(5).Text($"{fatura.IscilikUcreti:C2}");
+                            table.Cell().AlignRight().PaddingVertical(5).Text($"{fatura.IscilikUcreti:C2}");
+
+                            // 2. Satırlar: Kullanılan Yedek Parçalar
+                            int sira = 2;
+                            foreach (var parca in kullanilanParcalar)
+                            {
+                                // Fatura için köprü tablodan kaç adet kullanıldığını buluyoruz
+                                var miktar = randevu.RandevuParcalari.FirstOrDefault(rp => rp.YedekParcaId == parca.Id)?.KullanilanMiktar ?? 1;
+
+                                table.Cell().PaddingVertical(5).Text(sira.ToString());
+                                table.Cell().PaddingVertical(5).Text(parca.ParcaAdi);
+                                table.Cell().AlignRight().PaddingVertical(5).Text(miktar.ToString());
+                                table.Cell().AlignRight().PaddingVertical(5).Text($"{parca.BirimFiyat:C2}");
+                                table.Cell().AlignRight().PaddingVertical(5).Text($"{(parca.BirimFiyat * miktar):C2}");
+                                sira++;
+                            }
+                        });
+
+                        // ALT TOPLAM BÖLÜMÜ
+                        col.Item().PaddingTop(20).AlignRight().Column(c =>
+                        {
+                            c.Item().Text($"İşçilik Toplamı: {fatura.IscilikUcreti:C2}");
+                            c.Item().Text($"Parça Toplamı: {fatura.ToplamParcaMaliyeti:C2}");
+                            c.Item().Text($"GENEL TOPLAM: {fatura.GenelToplam:C2}").FontSize(14).SemiBold().FontColor(Colors.Red.Medium);
+                        });
+
+                        // ÖDEME VE BANKA BİLGİLERİ KUTUSU
+                        col.Item().PaddingTop(25).Background(Colors.Grey.Lighten4).Padding(10).Column(c =>
+                        {
+                            c.Item().PaddingBottom(5).Text("Ödeme Bilgileri ve Talimatlar").FontSize(12).SemiBold().FontColor(Colors.Blue.Darken3);
+
+                            c.Item().Text("Lütfen ödemenizi yaparken açıklama kısmına Fatura Numaranızı veya Plakanızı yazmayı unutmayınız.").FontSize(9).Italic();
+                            c.Item().PaddingTop(5).Text("Banka Adı: Garanti BBVA - Sanayi Şubesi").FontSize(10);
+                            c.Item().Text("Alıcı Adı: Oto Servis Pro A.Ş.").FontSize(10).SemiBold();
+                            c.Item().Text("TL IBAN: TR88 0006 2000 0001 2345 6789 10").FontSize(10).SemiBold();
+
+                            c.Item().PaddingTop(5).Text("Online ödeme yapmak için sistemimizdeki müşteri panelinize giriş yapıp kredi kartınızı kullanabilirsiniz.").FontSize(9);
+                        });
+                    });
+
+                    // ALT BİLGİ (FOOTER)
+                    page.Footer().AlignCenter().Text(x =>
+                    {
+                        x.Span("Sayfa ");
+                        x.CurrentPageNumber();
+                        x.Span(" / ");
+                        x.TotalPages();
+                    });
+
+                    
+                });
+            });
+
+            // 3. Dosyayı diske kaydet
+            belge.GeneratePdf(tamDosyaYolu);
+
+            // Bu metot dosyanın tam yolunu dönecek ki veritabanına ve maile iletebilelim
+            return await Task.FromResult(tamDosyaYolu);
+        }
+    }
+}
+ 
+==== C:\Users\yukse\OneDrive\Masaüstü\OtoServisProject\OtoServisApi\Services\RandevuService.cs ====  
+﻿using MassTransit;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using OtoServis.Contracts.Events;
+using OtoServisApi.DTOs;
+using OtoServis.Data.Models;
+using OtoServis.Data.Repositories;
+using OtoServisApi.Services;
+using static StackExchange.Redis.Role;
+
+
+
+namespace OtoServisApi.Services
+{
+    public class RandevuService : IRandevuService
+    {
+        private readonly IRandevuRepository _randevuRepository;
+        private readonly IRepository<Usta> _ustaRepository;
+        
+        private readonly IRepository<Kullanici> _kullaniciRepository;
+        private readonly IRepository<Arac> _aracRepository;
+
+        private readonly IRepository<HizmetTipi> _hizmetTipiRepository;
+        private readonly IRepository<YedekParca> _yedekParcaRepository;
+        private readonly IRepository<RandevuParca> _randevuParcaRepository;
+        private readonly IRepository<Fatura> _faturaRepository;
+        private readonly IRepository<Istasyon> _istasyonRepository;
+       
+        private readonly IPdfFaturaService _pdfFaturaService;
+        private readonly IPublishEndpoint _publishEndpoint; // 1. MassTransit arayüzü
+
+
+
+
+
+        public RandevuService(
+            IRandevuRepository randevuRepository,
+            IRepository<Usta> ustaRepository,
+            
+            IRepository<Kullanici> kullaniciRepository,
+            IRepository<Arac> aracRepository,
+            IRepository<HizmetTipi> hizmetRepository,
+            IRepository<YedekParca> yedekParcaRepository,
+            IRepository<RandevuParca> randevuParcaRepository,
+            IRepository<Fatura> faturaRepository,
+            IRepository<Istasyon> istasyonRepository,
+            IPdfFaturaService pdfFaturaService,
+            IPublishEndpoint publishEndpoint
+            )
+        {
+            _randevuRepository = randevuRepository;
+            _ustaRepository = ustaRepository;
+            
+            _kullaniciRepository = kullaniciRepository;
+            _aracRepository = aracRepository;
+            _hizmetTipiRepository = hizmetRepository;
+            _yedekParcaRepository = yedekParcaRepository;
+            _randevuParcaRepository = randevuParcaRepository;
+            _faturaRepository = faturaRepository;
+            _pdfFaturaService = pdfFaturaService;
+            _publishEndpoint = publishEndpoint;
+            _istasyonRepository = istasyonRepository;
+
+        }
+
+
+        public async Task<IEnumerable<RandevuDetayDto>> TumRandevulariGetirAsync()
+        {
+            var randevular = await _randevuRepository.TumRandevulariIliskileriyleGetirAsync();
+
+            return randevular.Select(r => new RandevuDetayDto
+            {
+
+                RandevuNo = r.Id,
+                Tarih = r.Tarih.ToString("dd.MM.yyyy HH:mm"),
+                MusteriBilgisi = r.Kullanici != null ? r.Kullanici.AdSoyad + " - " + r.Kullanici.Telefon : "Bilinmiyor",
+                AracPlaka = r.Arac != null ? r.Arac.Plaka : "Bilinmiyor",
+                HizmetAdi = r.HizmetTipi != null ? r.HizmetTipi.Ad : "Bilinmiyor",
+                ToplamTutar = r.HizmetTipi != null ? r.HizmetTipi.Fiyat : 0,
+                SorumluUsta = r.Usta != null ? r.Usta.AdSoyad : "Henüz Usta Atanmadı"
+            });
+        }
+
+        // Örnek Randevu Oluşturma / Ekleme Mantığı
+        public async Task<int> RandevuOlusturAsync(RandevuOlusturDto dto)
+        {
+
+
+            // Çok yüksek performanslı: SQL sadece 1 satır veri döndürür
+            var kullanici = await _kullaniciRepository.GetAsync(m => m.Email == dto.Email);
+
+            //amaaa eğer önce tüm verileri alayım Repostory üzerinden ardından gelen veriye C# tarafında bir filteleme yapayım 
+            //dersen bu tüm kayıtların(mesela 50.000 kayıt)RAMe getirilmesi demek bu da RAMi şişir yani filtreleme işlemini de 
+            //Repostorye atmalıyız ki filtreleme C#tarfaında değil de EFin dbye göndereciği sorgu üzerinde olsun filtre dbde yapılsı
+
+            //var musteriler = await _musteriRepository.GetAllAsync();
+            //var musteri = musteriler.FirstOrDefault(m => m.Telefon == talep.MusteriTelefon);
+
+            //BU YUKARIDAKİ İKİ SATIRLIK KOD RAMİ ŞİŞİRİCEK EFEKTİF DEĞİL!!!
+
+            if (kullanici == null)
+            {
+                kullanici = new Kullanici
+                {
+                    AdSoyad = dto.MusteriAdSoyad,
+                    Telefon = dto.MusteriTelefon,
+                    Email =dto.Email,
+                };
+                await _kullaniciRepository.AddAsync(kullanici);
+            }
+
+            // 2. Aracı Bul veya Oluştur
+            var arac = await _aracRepository.GetAsync(a => a.Plaka == dto.AracPlaka);
+
+            if (arac == null)
+            {
+                arac = new Arac
+                {
+                    Plaka = dto.AracPlaka,
+                    MarkaModel = dto.AracMarkaModel,
+                    UretimYili = dto.AracUretimYili,
+                    Kullanici = kullanici // ID yerine doğrudan nesneyi veriyoruz, EF Core bağlayacak
+                };
+                await _aracRepository.AddAsync(arac);
+            }
+            else if (arac.Kullanici?.Telefon != dto.MusteriTelefon)
+            {
+                // İkinci el durumu: Araç sistemde var ama başkasına aitmiş. Yeni sahibine devret.
+                arac.Kullanici =kullanici;
+                _aracRepository.UpdateAsync(arac);
+            }
+
+            // 3. Randevuyu Oluştur ve Tüm Nesneleri Bağla
+            var randevu = new Randevu
+            {
+                Kullanici = kullanici,
+                Arac = arac,
+                HizmetTipiId = 1, // Varsayılan olarak "Genel Kontrol" hizmeti
+                Tarih = dto.Tarih.ToUniversalTime().AddHours(3),
+                MusteriNotu = dto.MusteriNotu,
+                Durum = 0
+            };
+
+            // AKILLI TETİKLEYİCİ: Müşteri notunda aciliyet belirten anahtar kelimeler var mı?
+            var notKucuk = (dto.MusteriNotu ?? "").ToLower();
+            if (notKucuk.Contains("çekici") || notKucuk.Contains("kaza") ||
+                notKucuk.Contains("yolda") || notKucuk.Contains("acil") ||
+                notKucuk.Contains("çalışmıyor"))
+            {
+                randevu.AcilMi = true; // Sistem otomatik olarak acil bayrağını bastı!
+            }
+            else
+            {
+                randevu.AcilMi = false;
+            }
+
+            // Veritabanına kaydet...
+            await _randevuRepository.AddAsync(randevu);      
+            await _randevuRepository.SaveChangesAsync(); // Tüm değişiklikleri tek transaction ile kaydediyoruz
+
+            await _publishEndpoint.Publish(new RandevuOlusturulduEvent
+            {
+                RandevuId = randevu.Id,
+                MusteriEmail = kullanici.Email ?? dto.Email,
+                MusteriAdSoyad = kullanici.AdSoyad,
+                RandevuTarihi = randevu.Tarih,
+                AracPlaka = arac.Plaka,
+                // YENİ EKLENEN: Kullanıcının rolü "Misafir" ise true, değilse false gider
+                IsMisafir = kullanici.Rol.Equals("Misafir", StringComparison.OrdinalIgnoreCase)
+            });
+
+            // Müşteriye bekleme yaptırmadan hemen randevu numarasını dönüyoruz
+            return randevu.Id;
+        }
+
+        public async Task<bool> RandevuIptalEtAsync(int randevuId)
+        {
+            var randevu = await _randevuRepository.GetByIdAsync(randevuId);
+            if (randevu == null)
+            {
+                return false;
+            }
+
+            // İş Kuralı 2: Randevuya 2 saatten az kaldıysa iptal edilemez (Son Dakika Engeli)
+            if ((randevu.Tarih - DateTime.Now).TotalHours < 2)
+            {
+                return false;
+            }
+
+            // YENİ YAKLAŞIM: Veriyi silmek yerine Durumunu "İptal" (3) yapıyoruz
+            randevu.Durum = RandevuDurumu.Iptal;
+
+            // KRİTİK NOKTA: Usta ve İstasyonu (Lift) SERBEST BIRAKIYORUZ!
+            // Böylece Kaynak Planlama Motoru burayı boş görüp arkadaki randevuları buraya kaydırabilecek.
+            randevu.UstaId = null;
+            randevu.IstasyonId = null;
+
+            await _randevuRepository.UpdateAsync(randevu);
+
+            // EKSİK OLAN VE DB'YE YANSIMASINI SAĞLAYACAK KOD
+            await _randevuRepository.SaveChangesAsync();
+
+            return true;
+        }
+
+        public async Task<IEnumerable<Randevu>> GetMusteriRandevulariAsync(int musteriId)
+        {
+            // 1. Parametre: Filtre (KullaniciId'si eşleşenler)
+            // 2. ve 3. Parametre: Include edilecek tablolar (Arac ve HizmetTipi)
+            var randevular = await _randevuRepository.GetAllAsync(
+                r => r.KullaniciId == musteriId,
+                r => r.Arac,
+                r => r.HizmetTipi
+            );
+
+            return randevular;
+        }
+
+
+        public async Task<bool> RandevuTamamlaAsync(int randevuId)
+        {
+            var randevu = await _randevuRepository.GetByIdAsync(randevuId);
+
+            // TamamlandiMi yerine yeni Durum enum'unu kontrol ediyoruz
+            if (randevu == null || randevu.Durum == RandevuDurumu.Tamamlandi)
+                return false;
+
+            // Randevuyu tamamlandı olarak işaretle ve bitiş saatini damgala
+            randevu.Durum = RandevuDurumu.Tamamlandi;
+            randevu.GerceklesenBitis = DateTime.Now; // Ustanın işi bitirdiği gerçek an
+
+            await _randevuRepository.UpdateAsync(randevu);
+            return true;
+        }
+
+        public async Task<bool> SureUzatVeArkadakileriKaydirAsync(int randevuId, SureUzatDto dto)
+        {
+            var tumRandevular = (await _randevuRepository.GetAllAsync(
+                null,
+                 r => r.Kullanici,
+                 r => r.HizmetTipi,
+                 r => r.Arac // Eksik olan Include eklendi
+             )).ToList();
+
+            var ustalar = (await _ustaRepository.GetAllAsync()).ToList();
+
+            var randevu = await _randevuRepository.GetByIdAsync(randevuId);
+            if (randevu == null) return false;
+
+            if (randevu.Durum == RandevuDurumu.Bekliyor)
+            {
+                randevu.Durum = RandevuDurumu.Islemde;
+                randevu.GerceklesenBaslangic = DateTime.Now;
+                await _randevuRepository.UpdateAsync(randevu);
+            }
+
+            var arkadakiRandevular = tumRandevular
+                .Where(r => r.UstaId == randevu.UstaId && r.Tarih > randevu.Tarih && r.Durum == RandevuDurumu.Bekliyor)
+                .OrderBy(r => r.Tarih)
+                .ToList();
+
+            TimeSpan mesaiBaslangic = new TimeSpan(9, 0, 0);
+            TimeSpan mesaiBitis = new TimeSpan(18, 0, 0);
+            TimeSpan molaBaslangic = new TimeSpan(12, 0, 0);
+            TimeSpan molaBitis = new TimeSpan(13, 0, 0);
+
+            foreach (var arkaRandevu in arkadakiRandevular)
+            {
+                int islemSuresi = arkaRandevu.HizmetTipi?.UstaSureDakika ?? 30;
+                bool alternatifBulundu = false;
+                bool mesaiAsimiOldu = false;
+
+                var maxErtelemeSaati = arkaRandevu.Tarih.AddMinutes(dto.EkSureDakika);
+                var orijinalSaat = arkaRandevu.Tarih;
+                var denenenSaat = orijinalSaat;
+
+                while (denenenSaat <= maxErtelemeSaati)
+                {
+                    var denenenBitisSaati = denenenSaat.AddMinutes(islemSuresi);
+
+                    if (denenenSaat.TimeOfDay < molaBitis && denenenBitisSaati.TimeOfDay > molaBaslangic)
+                    {
+                        denenenSaat = denenenSaat.Date.Add(molaBitis);
+                        continue;
+                    }
+
+                    if (denenenBitisSaati.TimeOfDay > mesaiBitis)
+                    {
+                        mesaiAsimiOldu = true;
+                        break;
+                    }
+
+                    foreach (var usta in ustalar)
+                    {
+                        if (usta.Id == randevu.UstaId) continue;
+                        if (usta.UzmanlikAlani != arkaRandevu.HizmetTipi?.GerekenUzmanlik) continue;
+
+                        bool ustaninCakisanIsiVarMi = tumRandevular.Any(r =>
+                            r.Id != arkaRandevu.Id &&
+                            r.UstaId == usta.Id &&
+                            (r.Durum == RandevuDurumu.Bekliyor || r.Durum == RandevuDurumu.Islemde) &&
+                            (r.Tarih < denenenSaat.AddMinutes(islemSuresi) && r.Tarih.AddMinutes(islemSuresi) > denenenSaat)
+                        );
+
+                        if (!ustaninCakisanIsiVarMi)
+                        {
+                            arkaRandevu.UstaId = usta.Id;
+                            arkaRandevu.Tarih = denenenSaat;
+
+                            await _randevuRepository.UpdateAsync(arkaRandevu);
+                            alternatifBulundu = true;
+
+                            if (denenenSaat > orijinalSaat)
+                            {
+                                await _publishEndpoint.Publish(new RandevuKaydirildiEvent
+                                {
+                                    RandevuId = arkaRandevu.Id,
+                                    MusteriEmail = arkaRandevu.Kullanici?.Email ?? "musteri@ornek.com", // Null koruması eklendi
+                                    MusteriAdSoyad = arkaRandevu.Kullanici?.AdSoyad ?? "Sayın Müşterimiz",
+                                    AracPlaka = arkaRandevu.Arac?.Plaka ?? string.Empty, // Null koruması eklendi
+                                    EskiTarih = orijinalSaat,
+                                    YeniTarih = denenenSaat,
+                                    Tip = KaydirmaTipi.HafifGuncelleme,
+                                    Aciklama = "Önceki işlemlerin uzamasından dolayı randevunuz güncellenmiştir."
+                                });
+                            }
+                            break;
+                        }
+                    }
+
+                    if (alternatifBulundu) break;
+                    denenenSaat = denenenSaat.AddMinutes(5);
+                }
+
+                if (mesaiAsimiOldu)
+                {
+                    var ertesiGun = arkaRandevu.Tarih.Date.AddDays(1).Add(mesaiBaslangic);
+                    if (ertesiGun.DayOfWeek == DayOfWeek.Sunday) ertesiGun = ertesiGun.AddDays(1);
+
+                    arkaRandevu.Tarih = ertesiGun;
+                    arkaRandevu.UstaId = randevu.UstaId;
+
+                    await _randevuRepository.UpdateAsync(arkaRandevu);
+
+                    await _publishEndpoint.Publish(new RandevuKaydirildiEvent
+                    {
+                        RandevuId = arkaRandevu.Id,
+                        MusteriEmail = arkaRandevu.Kullanici?.Email ?? "musteri@ornek.com",
+                        MusteriAdSoyad = arkaRandevu.Kullanici?.AdSoyad ?? "Sayın Müşterimiz",
+                        AracPlaka = arkaRandevu.Arac?.Plaka ?? string.Empty,
+                        EskiTarih = orijinalSaat,
+                        YeniTarih = ertesiGun,
+                        Tip = KaydirmaTipi.VipErtesiGun,
+                        Aciklama = "İşlem atölye mesaimizi aştığı için randevunuz ertesi gün sabah 'VIP İlk Araç' statüsüne taşınmıştır."
+                    });
+                }
+                else if (!alternatifBulundu)
+                {
+                    arkaRandevu.Tarih = orijinalSaat.AddMinutes(dto.EkSureDakika);
+
+                    if (arkaRandevu.Tarih.TimeOfDay < molaBitis && arkaRandevu.Tarih.AddMinutes(islemSuresi).TimeOfDay > molaBaslangic)
+                    {
+                        arkaRandevu.Tarih = arkaRandevu.Tarih.Date.Add(molaBitis);
+                    }
+
+                    await _randevuRepository.UpdateAsync(arkaRandevu);
+
+                    await _publishEndpoint.Publish(new RandevuKaydirildiEvent
+                    {
+                        RandevuId = arkaRandevu.Id,
+                        MusteriEmail = arkaRandevu.Kullanici?.Email ?? "musteri@ornek.com",
+                        MusteriAdSoyad = arkaRandevu.Kullanici?.AdSoyad ?? "Sayın Müşterimiz",
+                        AracPlaka = arkaRandevu.Arac?.Plaka ?? string.Empty,
+                        EskiTarih = orijinalSaat,
+                        YeniTarih = arkaRandevu.Tarih,
+                        Tip = KaydirmaTipi.KrizErtelemesi,
+                        Aciklama = "Tüm birimlerimizdeki acil yoğunluk sebebiyle randevu saatiniz zorunlu olarak kaydırılmıştır."
+                    });
+                }
+            }
+
+            // Performans iyileştirmesi: Tüm güncellemeler bittikten sonra tek seferde veritabanına yazılır 
+            // FİNAL: Hangi repodan çağırdığının önemi yok, o anki DbContext'i tetikler! ve Ramde tutulan tüm işlemler(update,delete,vs) tek bir transaction(pakette) artık dbde kaydedilir
+            await _randevuRepository.SaveChangesAsync();
+
+            return true;
+        }
+
+        public async Task<bool> RandevuBaslatAsync(int randevuId)
+        {
+            // 1. Randevuyu buluyoruz
+            var randevu = await _randevuRepository.GetByIdAsync(randevuId);
+            if (randevu == null || randevu.Durum != RandevuDurumu.Bekliyor)
+                return false;
+
+            // Randevuyu işlemde olarak işaretle ve gerçek başlama saatini damgala
+            randevu.Durum = RandevuDurumu.Islemde;
+            randevu.GerceklesenBaslangic = DateTime.Now;
+
+            await _randevuRepository.UpdateAsync(randevu);
+
+            // 2. Eğer randevuya atanmış bir istasyon varsa, veritabanından çekip meşgule alıyoruz
+            if (randevu.IstasyonId.HasValue)
+            {
+                var istasyon = await _istasyonRepository.GetAsync(i => i.Id == randevu.IstasyonId.Value);
+                if (istasyon != null)
+                {
+                    istasyon.MusaitMi = false; // Lifti meşgule (dolu) çekiyoruz
+                    await _istasyonRepository.UpdateAsync(istasyon);
+                }
+            }
+
+            // --- EN KRİTİK NOKTA: DEĞİŞİKLİKLERİ TEK SEFERDE SQL'E KOMPLE YAZIYORUZ ---
+            await _randevuRepository.SaveChangesAsync();
+            return true;
+        }
+        public async Task<Fatura> IslemiTamamlaVeFaturaKesAsync(RandevuTamamlamaDto dto)
+        {
+            var randevu = await _randevuRepository.GetAsync(r => r.Id == dto.RandevuId);
+            if (randevu == null) throw new Exception("Randevu bulunamadı.");
+            if (randevu.Durum == RandevuDurumu.Tamamlandi) throw new Exception("Bu randevu zaten tamamlanmış.");
+
+            var hizmet = await _hizmetTipiRepository.GetAsync(h => h.Id == randevu.HizmetTipiId);
+            decimal iscilikUcreti = hizmet.Fiyat;
+            decimal toplamParcaMaliyeti = 0;
+
+            var faturayaGidecekParcalar = new List<YedekParca>();
+
+            foreach (var parcaDto in dto.KullanilanParcalar)
+            {
+                var stoktakiParca = await _yedekParcaRepository.GetAsync(y => y.Id == parcaDto.YedekParcaId);
+
+                if (stoktakiParca == null) throw new Exception("Yedek parça bulunamadı.");
+                if (stoktakiParca.StokMiktari < parcaDto.KullanilanMiktar) throw new Exception($"{stoktakiParca.ParcaAdi} için stok yetersiz.");
+
+                stoktakiParca.StokMiktari -= parcaDto.KullanilanMiktar;
+                await _yedekParcaRepository.UpdateAsync(stoktakiParca);
+
+                toplamParcaMaliyeti += (stoktakiParca.BirimFiyat * parcaDto.KullanilanMiktar);
+
+                var randevuParca = new RandevuParca
+                {
+                    RandevuId = randevu.Id,
+                    YedekParcaId = stoktakiParca.Id,
+                    KullanilanMiktar = parcaDto.KullanilanMiktar
+                };
+                await _randevuParcaRepository.AddAsync(randevuParca);
+                await _randevuParcaRepository.SaveChangesAsync();
+
+                faturayaGidecekParcalar.Add(stoktakiParca);
+            }
+
+            // --- 1. İŞLEM BİTTİĞİ İÇİN RANDEVUYU GÜNCELLİYORUZ ---
+            randevu.Durum = RandevuDurumu.Tamamlandi;
+            randevu.GerceklesenBitis = DateTime.Now;
+            await _randevuRepository.UpdateAsync(randevu);
+
+            // --- 2. KRİTİK DOKUNUŞ: LİFTİ (İSTASYONU) TEKRAR BOŞA (MÜSAİTE) ÇIKARIYORUZ! ---
+            if (randevu.IstasyonId.HasValue)
+            {
+                var istasyon = await _istasyonRepository.GetByIdAsync(randevu.IstasyonId.Value);
+                if (istasyon != null)
+                {
+                    istasyon.MusaitMi = true; // Lifti tekrar MÜSAİT (1 / true) yaptık!
+                    await _istasyonRepository.UpdateAsync(istasyon);
+                }
+            }
+
+            await _randevuRepository.SaveChangesAsync();
+
+            // --- 3. FATURA ÜRETİMİ VE MAİL SÜREÇLERİ ---
+            var fatura = new Fatura
+            {
+                RandevuId = randevu.Id,
+                IscilikUcreti = iscilikUcreti,
+                ToplamParcaMaliyeti = toplamParcaMaliyeti,
+                KesimTarihi = DateTime.Now
+            };
+
+            await _faturaRepository.AddAsync(fatura);
+            await _faturaRepository.SaveChangesAsync();
+
+            randevu.Kullanici = await _kullaniciRepository.GetAsync(m => m.Id == randevu.KullaniciId);
+            randevu.Arac = await _aracRepository.GetAsync(a => a.Id == randevu.AracId);
+            randevu.HizmetTipi = hizmet;
+            randevu.RandevuParcalari = (await _randevuParcaRepository.GetAllAsync(rp => rp.RandevuId == randevu.Id)).ToList();
+
+            string pdfYolu = await _pdfFaturaService.FaturaUretVeKaydetAsync(fatura, randevu, faturayaGidecekParcalar);
+
+            fatura.PdfDosyaYolu = pdfYolu;
+            await _faturaRepository.UpdateAsync(fatura);
+            await _faturaRepository.SaveChangesAsync();
+
+            await _publishEndpoint.Publish(new FaturaKesildiEvent
+            {
+                FaturaId = fatura.Id,
+                RandevuId = randevu.Id,
+                MusteriEmail = randevu.Kullanici?.Email ?? string.Empty,
+                MusteriAdSoyad = randevu.Kullanici?.AdSoyad ?? "Sayın Müşterimiz",
+                AracPlaka = randevu.Arac?.Plaka ?? string.Empty,
+                ToplamTutar = fatura.GenelToplam,
+                KesimTarihi = fatura.KesimTarihi,
+                IscilikUcreti = fatura.IscilikUcreti,
+                Parca = fatura.ToplamParcaMaliyeti,
+                PdfDosyaYolu = pdfYolu
+            });
+
+            return fatura;
+        }
+
+        public async Task<IEnumerable<Randevu>> GetUstaninGunlukRandevulariAsync(int ustaId)
+        {
+            var tumRandevular = await _randevuRepository.TumRandevulariIliskileriyleGetirAsync();
+
+            // Sadece BUGÜNE ait ve o USTAYA atanmış randevuları saatine göre sıralayarak getir
+            return tumRandevular
+                .Where(r => r.UstaId == ustaId && r.Tarih.Date == DateTime.Today)
+                .OrderBy(r => r.Tarih)
+                .ToList();
+        }
+
+        public async Task<IEnumerable<Randevu>> GetGunlukTumRandevularAsync()
+        {
+            var tumRandevular = await _randevuRepository.TumRandevulariIliskileriyleGetirAsync();
+
+            // Sadece BUGÜNE ait TÜM randevuları saatine göre sıralayarak getir
+            return tumRandevular
+             .Where(r => r.Tarih.Date == DateTime.Today.Date)
+             .OrderBy(r => r.Tarih)
+             .ToList();
+        }
+
+
+    }
+    }
+
+
+ 

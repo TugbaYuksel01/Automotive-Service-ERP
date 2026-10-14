@@ -1,0 +1,151 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Servis Kabul Ekranı (Personel)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            padding: 30px;
+        }
+
+        .container {
+            max-width: 500px;
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        input, select {
+            padding: 10px;
+            width: 100%;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 12px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+            button:hover {
+                background-color: #218838;
+            }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Yeni Randevu (Resepsiyon)</h2>
+
+        <form id="randevuForm">
+            <div class="form-group">
+                <label>Tarih ve Saat:</label>
+                <input type="datetime-local" id="tarih" required>
+            </div>
+
+            <div class="form-group">
+                <label>Müşteri Seçin:</label>
+                <!-- Personel isim görecek, sistem arka planda ID tutacak -->
+                <select id="musteriId" required>
+                    <option value="">Veriler yükleniyor...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Hizmet Tipi:</label>
+                <select id="hizmetTipiId" required>
+                    <option value="">Veriler yükleniyor...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Müşteri Notu:</label>
+                <input type="text" id="musteriNotu" placeholder="Örn: Sol ön fardan ses geliyor">
+            </div>
+
+            <button type="submit">Randevuyu Kaydet</button>
+        </form>
+    </div>
+
+    <script>
+        // Sayfa ilk açıldığında otomatik olarak veritabanına bağlanıp listeleri doldurur
+        window.onload = async function () {
+            try {
+                // 1. Müşterileri API'den çek (GET)
+                const musteriResponse = await fetch('/api/Musteriler');
+                const musteriler = await musteriResponse.json();
+
+                const musteriSelect = document.getElementById('musteriId');
+                musteriSelect.innerHTML = '<option value="">Müşteri Seçin...</option>';
+
+                // Gelen her müşteri için listeye yeni bir satır ekle
+                musteriler.forEach(m => {
+                    musteriSelect.innerHTML += `<option value="${m.id}">${m.adSoyad} (${m.aracPlaka})</option>`;
+                });
+
+                // 2. Hizmet Tiplerini API'den çek (GET)
+                const hizmetResponse = await fetch('/api/HizmetTipleri');
+                const hizmetler = await hizmetResponse.json();
+
+                const hizmetSelect = document.getElementById('hizmetTipiId');
+                hizmetSelect.innerHTML = '<option value="">Hizmet Seçin...</option>';
+
+                hizmetler.forEach(h => {
+                    hizmetSelect.innerHTML += `<option value="${h.id}">${h.ad} - ${h.fiyat} TL</option>`;
+                });
+            } catch (error) {
+                console.error("Veriler çekilirken hata oluştu:", error);
+                alert("Veritabanına bağlanılamadı. API'nin çalıştığından emin olun.");
+            }
+        };
+
+        // Form Gönderme İşlemi (POST)
+        document.getElementById('randevuForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+
+            const randevuPaketi = {
+                tarih: document.getElementById('tarih').value,
+                musteriNotu: document.getElementById('musteriNotu').value,
+                musteriId: parseInt(document.getElementById('musteriId').value),
+                hizmetTipiId: parseInt(document.getElementById('hizmetTipiId').value)
+            };
+
+            const response = await fetch('/api/Randevular', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(randevuPaketi)
+            });
+
+            if (response.ok) {
+                alert("Randevu başarıyla eklendi!");
+                document.getElementById('randevuForm').reset();
+            } else {
+                alert("Kayıt işlemi başarısız oldu.");
+            }
+        });
+    </script>
+
+</body>
+</html>
