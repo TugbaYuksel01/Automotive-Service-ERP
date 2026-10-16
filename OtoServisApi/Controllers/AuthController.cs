@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Distributed;
 using OtoServisApi.DTOs;
 using OtoServisApi.Services;
@@ -7,6 +8,7 @@ using System.IdentityModel.Tokens.Jwt;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [Route("api/[controller]")]
     [ApiController]
     public class AuthController : ControllerBase

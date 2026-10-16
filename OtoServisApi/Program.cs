@@ -12,6 +12,8 @@ using OtoServis.Data.Repositories;
 using OtoServisApi.Services;
 using Serilog;
 using System.Text;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 // 1. Uygulama ayağa kalkmadan hemen önce Serilog yapılandırmasını başlatıyoruz
 Log.Logger = new LoggerConfiguration()
@@ -163,6 +165,19 @@ try
     builder.Services.AddHttpClient();
     builder.Services.AddHostedService<KaynakPlanlamaMotoru>();
 
+    //"SabitZamanliKural" adında, 10 saniyede maksimum 5 isteğe izin veren, sınırı aşanı da sıraya sokmadan anında 429 Too Many Requests hatasıyla reddeden bir politika oluşturuyoruz.
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+        options.AddFixedWindowLimiter("SabitZamanliKural", opt =>
+        {
+            opt.Window = TimeSpan.FromSeconds(10);
+            opt.PermitLimit = 5;
+            opt.QueueLimit = 0;
+        });
+    });
+
 
     // =======================================================
     // 2. UYGULAMANIN İNŞASI VE ARA YAZILIM (MIDDLEWARE) HATTI
@@ -188,6 +203,7 @@ try
     // GÜVENLİK 
     app.UseAuthentication();
     app.UseMiddleware<OtoServisApi.Middlewares.GlobalAuditMiddleware>();
+    app.UseRateLimiter();
     app.UseAuthorization();
     
     app.MapControllers();

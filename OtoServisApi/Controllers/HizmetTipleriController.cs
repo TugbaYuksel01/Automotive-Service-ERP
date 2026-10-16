@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Distributed;
 using OtoServis.Data.Models;
 using OtoServis.Data.Repositories;
@@ -7,6 +8,7 @@ using System.Text.Json;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [Route("api/[controller]")]
     [ApiController]
     public class HizmetTipleriController : ControllerBase
@@ -23,6 +25,7 @@ namespace OtoServisApi.Controllers
 
         [HttpGet]
         [AllowAnonymous]
+        
         public async Task<ActionResult<IEnumerable<HizmetTipi>>> GetHizmetTipleri()
         {
             string cacheKey = "tum_hizmetler";

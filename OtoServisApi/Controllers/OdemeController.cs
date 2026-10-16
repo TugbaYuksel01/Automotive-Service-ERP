@@ -1,12 +1,14 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using OtoServisApi.DTOs;
+using Microsoft.AspNetCore.RateLimiting;
 using OtoServis.Data.Models;
 using OtoServis.Data.Repositories;
+using OtoServisApi.DTOs;
 using System.Security.Claims;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [Route("api/[controller]")]
     [ApiController]
     [Authorize] // Token'ı olan (müşteri) ödeme yapabilir
