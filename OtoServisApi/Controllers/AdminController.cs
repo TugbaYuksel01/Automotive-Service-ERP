@@ -1,10 +1,12 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OtoServisApi.DTOs;
 using OtoServisApi.Services;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [ApiController]
     [Route("api/[controller]")]
     public class AdminController : ControllerBase

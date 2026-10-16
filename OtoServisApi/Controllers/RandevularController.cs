@@ -1,6 +1,7 @@
 ﻿using MassTransit; // RabbitMQ için gerekli
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using OtoServerApi.Services;
 using OtoServis.Data.Models;
@@ -19,6 +20,7 @@ namespace OtoServisApi.Controllers
     [Route("api/[controller]")]
     [ApiController]
     [Authorize] // 1. KURAL: Bu sınıftaki HİÇBİR uç noktaya yaka kartı (Token) olmadan ulaşılamaz.
+    
     public class RandevularController : ControllerBase
     {
         private readonly IRandevuService _randevuService;
@@ -127,6 +129,7 @@ namespace OtoServisApi.Controllers
         [AllowAnonymous]
         [HttpPost("Misafir Randevu")]
         [Idempotent]
+        [EnableRateLimiting("SabitZamanliKural")]
         public async Task<IActionResult> MisafirYeniRandevu(RandevuOlusturDto dto)
         {
             try

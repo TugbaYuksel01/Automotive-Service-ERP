@@ -37,6 +37,27 @@ export const api = axios.create({
   ],
 });
 
+api.interceptors.response.use(
+    (response) => {
+        // Gelen cevap 200/201 (Başarılı) ise hiç dokunmadan geçir
+        return response;
+    },
+    (error) => {
+        // Eğer dönen bir hata varsa ve bu hatanın kodu 429 ise burası çalışır
+        if (error.response && error.response.status === 429) {
+            
+            // Projende react-toastify veya benzeri bir bildirim aracı varsa onu kullanabilirsin
+            // Örnek: toast.warning("Çok hızlı işlem yapıyorsunuz, lütfen biraz bekleyin.");
+            
+            // Eğer yoksa şimdilik basit bir tarayıcı uyarısı da iş görür:
+            alert("Çok hızlı işlem yapıyorsunuz, lütfen biraz bekleyip tekrar deneyin.");
+        }
+
+        // 404, 500 gibi diğer hataların normal şekilde fırlatılmasına izin ver
+        return Promise.reject(error);
+    }
+);
+
 
 api.interceptors.request.use((config) => {
   const token = sessionStorage.getItem('token');

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Distributed;
 using OtoServis.Data.Models;
 using OtoServis.Data.Repositories;
@@ -8,6 +9,7 @@ using System.Text.Json.Serialization;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [Route("api/[controller]")]
     [ApiController]
     // Sadece SuperAdmin, Admin ve yeni ekleyeceğimiz DepoSorumlusu girebilir!

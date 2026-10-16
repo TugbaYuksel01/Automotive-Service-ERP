@@ -1,12 +1,14 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OtoServis.Data.Models;
 using OtoServis.Data.Repositories;
-using System.Security.Claims;
 using OtoServisApi.DTOs;
+using System.Security.Claims;
 
 namespace OtoServisApi.Controllers
 {
+    [EnableRateLimiting("SabitZamanliKural")]
     [Route("api/[controller]")]
     [ApiController]
     [Authorize] // KURAL: Token'ı olan herkes (Müşteri, Usta, Admin) girebilir
