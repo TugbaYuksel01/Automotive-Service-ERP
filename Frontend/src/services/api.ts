@@ -153,12 +153,12 @@ export const parcaApi = {
 };
 
 export const randevuApi = {
-  misafir: (dto: RandevuOlusturDto) =>
-    api.post(`/Randevular/${encodeURIComponent('Misafir Randevu')}`, dto),
+ misafir: (dto: RandevuOlusturDto, config?: any) =>
+    api.post(`/Randevular/${encodeURIComponent('Misafir Randevu')}`, dto,config),
     
   // BURASI DÜZELTİLDİ: 'Kayıtlı Müşteri Randevu' yerine 'Kayitli Randevu' yapıldı
-  kayitliMusteri: (dto: KayitliRandevuTalebiDto) =>
-    api.post(`/Randevular/${encodeURIComponent('Kayitli Randevu')}`, dto),
+  kayitliMusteri: (dto: KayitliRandevuTalebiDto, config?: any) =>
+    api.post(`/Randevular/${encodeURIComponent('Kayitli Randevu')}`, dto,config),
     
   benimRandevularim: async (): Promise<Randevu[]> => {
     const res = await api.get('/Randevular/benim-randevularim');
