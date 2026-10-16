@@ -94,7 +94,7 @@ namespace OtoServisApi.Services
             dto.AcilMi = false;
             var not = dto.MusteriNotu ?? "";
 
-            string[] anahtarKelimeler = { "çekici", "cekici", "kaza", "yolda", "acil", "acıl" };
+            string[] anahtarKelimeler = { "kaza", "yolda", "acil", "acıl" };
 
             foreach (var kelime in anahtarKelimeler)
             {
@@ -107,9 +107,9 @@ namespace OtoServisApi.Services
 
             // Eğer müşteri ACİL ise, kapasite dolsa bile aşağıya inmeden direkt geçiş izni ver!
             if (dto.AcilMi) return;
-            _logger.LogInformation("bu mesajı görüyosan return olmadık yola devam");
+            
 
-            _logger.LogInformation("SEN acil değilmişsina ma dolu zamanımıza mı denk geldin bakalım bacım");
+            
             // 2. KAPASİTE VE DOLULUK KONTROLÜ (Sadece Normal Müşteriler İçin)
             var talepEdilenHizmet = await _hizmetTipiRepository.GetByIdAsync(dto.HizmetTipiId);
             if (talepEdilenHizmet == null) throw new Exception("Geçersiz hizmet seçimi.");
@@ -149,7 +149,7 @@ namespace OtoServisApi.Services
                 
             }
 
-            _logger.LogInformation("bacım çakışma var mıymış?");
+           
             // Gelecek saatleri önerebilmek için sadece bugünü değil, önümüzdeki 7 günü RAM'e alıyoruz
             DateTime aramaMaksimumSiniri = istenenBaslangic.AddDays(7);
             var gelecektekiIsler = (await _randevuRepository.GetAllAsync(
@@ -158,7 +158,7 @@ namespace OtoServisApi.Services
                 r => r.HizmetTipi
             )).ToList();
 
-            _logger.LogInformation("gelll kk liste geçti m eline");
+          
             var ustalar = await _ustaRepository.GetAllAsync();
             var istasyonlar = await _istasyonRepository.GetAllAsync();
 
@@ -183,11 +183,10 @@ namespace OtoServisApi.Services
             bool liftDolu = oSaattekiCakisanLiftIsiSayisi >= dukkaninToplamLiftSayisi;
             _logger.LogInformation($"{liftDolu}");
 
-            _logger.LogInformation("buraya ulaşabildin mi bari");
+            
             // EĞER KAPASİTE DOLUYSA ALTERNATİF SAAT ARAMAYA BAŞLA
             if (ustaDolu || liftDolu)
             {
-                _logger.LogInformation("bacım kapasitemiz doluymuş ama senin için bi alternatif bakıcaz");
                 DateTime alternatifSaat = istenenBaslangic;
                 DateTime? enErkenBosSaat = null;
                
@@ -205,7 +204,7 @@ namespace OtoServisApi.Services
                         alternatifSaat = alternatifSaat.Date.Add(molaBitis);
                     }
 
-                    // Mesai saatini aşıyorsa ertesi sabah 09:00'a atla (Pazara gelirse Pazartesiye atla)
+                    // Mesai saatini aşıyorsa ertesi sabah 09:00'a atla
                     if (testBitis.TimeOfDay > mesaiBitis)
                     {
                         alternatifSaat = alternatifSaat.Date.AddDays(1).Add(mesaiBaslangic);
@@ -213,28 +212,29 @@ namespace OtoServisApi.Services
                         continue;
                     }
 
-                    var uygunUstaVarMi = ustalar.Any(u =>
-                        u.UzmanlikAlani == talepEdilenHizmet.GerekenUzmanlik &&
-                        !gelecektekiIsler.Any(d => d.UstaId == u.Id &&
-                        IkiZamanAraligiKesisiyorMu(alternatifSaat, ustaSure, d.GerceklesenBaslangic ?? d.Tarih, d.HizmetTipi?.UstaSureDakika ?? 30))
+                    // 💡 DÜZELTİLEN KISIM: Spesifik ustayı/lifti aramak yerine, o saatteki TOPLAM çakışmayı kapasiteyle kıyaslıyoruz.
+                    int testOlanCakisanUstaSayisi = gelecektekiIsler.Count(r =>
+                        r.HizmetTipi?.GerekenUzmanlik == talepEdilenHizmet.GerekenUzmanlik &&
+                        IkiZamanAraligiKesisiyorMu(alternatifSaat, ustaSure, r.GerceklesenBaslangic ?? r.Tarih, r.HizmetTipi?.UstaSureDakika ?? 30)
                     );
 
-                    var uygunLiftVarMi = istasyonlar.Any(i =>
-                        i.MusaitMi &&
-                        !gelecektekiIsler.Any(d => d.IstasyonId == i.Id &&
-                        IkiZamanAraligiKesisiyorMu(alternatifSaat, liftSure, d.GerceklesenBaslangic ?? d.Tarih, d.HizmetTipi?.LiftSureDakika ?? 60))
+                    int testOlanCakisanLiftSayisi = gelecektekiIsler.Count(r =>
+                        IkiZamanAraligiKesisiyorMu(alternatifSaat, liftSure, r.GerceklesenBaslangic ?? r.Tarih, r.HizmetTipi?.LiftSureDakika ?? 60)
                     );
 
-                    // Hem usta hem lift boşsa saati bulduk demektir!
-                    if (uygunUstaVarMi && uygunLiftVarMi)
+                    // Eğer o alternatif saatteki toplam çakışan iş sayısı, dükkanın kapasitesinden küçükse YER VARDIR!
+                    bool ustaIcinYerVar = testOlanCakisanUstaSayisi < dukkaninToplamUzmanUstaSayisi;
+                    bool liftIcinYerVar = testOlanCakisanLiftSayisi < dukkaninToplamLiftSayisi;
+
+                    // Hem usta hem lift için genel kapasitede boşluk varsa saati bulduk demektir!
+                    if (ustaIcinYerVar && liftIcinYerVar)
                     {
-                        _logger.LogInformation("bacım şanslısınn valla boş usta da lift de yakaladın ");
                         enErkenBosSaat = alternatifSaat;
                         break;
                     }
                 }
 
-                _logger.LogInformation("Bacım biz doluymuşuz şansına küss");
+                
                 // Bulunan saate göre müşteriye verilecek zenginleştirilmiş hata mesajını oluştur
                 string sebep = ustaDolu ? $"'{talepEdilenHizmet.GerekenUzmanlik}' uzmanlarımız" : "araç bakım istasyonlarımız";
                 string hataMesaji = $"Seçtiğiniz {istenenBaslangic:HH:mm} saatinde {sebep} tam kapasite doludur. ";
@@ -244,7 +244,7 @@ namespace OtoServisApi.Services
                 {
                     string gunIfadesi = enErkenBosSaat.Value.Date == istenenBaslangic.Date ? "bugün" : enErkenBosSaat.Value.ToString("dd.MM.yyyy");
                     hataMesaji += $"Size en erken {gunIfadesi} saat {enErkenBosSaat.Value:HH:mm} için yardımcı olabiliriz. Lütfen bu saat için tekrar randevu oluşturunuz.";
-                    _logger.LogInformation(("şu saate al randevuyu salak"));
+                    
                 }
                 else
                 {
