@@ -6,8 +6,10 @@ using OtoServerApi.Services;
 using OtoServis.Data.Models;
 using OtoServis.Data.Repositories;  
 using OtoServisApi.DTOs;
+using OtoServisApi.Filters;
 using OtoServisApi.Services;
 using System.Security.Claims; // Token içinden veri okumak için gerekli
+
 
 
 
@@ -52,7 +54,8 @@ namespace OtoServisApi.Controllers
             _ustaRepository = ustaRepository;
             _aiTriageService = aiTriageService;        }
 
-            [HttpPost("Kayitli Randevu")]
+        [HttpPost("Kayitli Randevu")]
+        [Idempotent]
         public async Task<IActionResult> KayitliYeniRandevu([FromBody] KayitliRandevuTalebiDto kisaDto)
         {
             try
@@ -123,6 +126,7 @@ namespace OtoServisApi.Controllers
 
         [AllowAnonymous]
         [HttpPost("Misafir Randevu")]
+        [Idempotent]
         public async Task<IActionResult> MisafirYeniRandevu(RandevuOlusturDto dto)
         {
             try
