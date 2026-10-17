@@ -6,7 +6,7 @@ using OtoServis.Data.Repositories;
 
 namespace OtoServis.Data.Controllers
 {
-    [EnableRateLimiting("SabitZamanliKural")]
+    
     [Route("api/[controller]")]
     [ApiController]
     public class UstalarController : ControllerBase

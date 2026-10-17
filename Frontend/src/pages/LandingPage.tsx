@@ -16,11 +16,14 @@ import {
 import { hizmetApi } from '@/services/api';
 import type { HizmetTipi } from '@/types';
 import { LoadingSpinner } from '@/components/Loading';
+import { useToast } from '@/contexts/ToastContext';
 
 export function LandingPage() {
   const [hizmetler, setHizmetler] = useState<HizmetTipi[]>([]);
   const [loading, setLoading] = useState(true);
+  const { showWarning } = useToast();
 
+  // 1. API Çağrısı: Sayfa yüklendiğinde hizmetleri getirir
   useEffect(() => {
     hizmetApi
       .listele()
@@ -28,6 +31,18 @@ export function LandingPage() {
       .catch(() => setHizmetler([]))
       .finally(() => setLoading(false));
   }, []);
+
+  // 2. Demo Uyarısı: Sadece ilk girişte toast bildirimini tetikler
+  useEffect(() => {
+    const uyariGosterildi = sessionStorage.getItem('demoUyari');
+    if (!uyariGosterildi) {
+      showWarning(
+        '⚠️ Demo Sistem Uyarısı',
+        'Bu site bir portfolyo / test ortamıdır. Lütfen gerçek kişisel bilgilerinizi, telefonunuzu veya plakanızı girmeyiniz!'
+      );
+      sessionStorage.setItem('demoUyari', 'true');
+    }
+  }, [showWarning]);
 
   return (
     <div>
