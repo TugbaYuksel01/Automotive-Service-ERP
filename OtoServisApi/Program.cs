@@ -166,6 +166,19 @@ try
     // Dış İstekler ve Arka Plan Görevleri
     builder.Services.AddHttpClient();
     builder.Services.AddHostedService<KaynakPlanlamaMotoru>();
+    // React frontend'ine API ile konuşma yetkisi veriyoruz (VIP Liste)
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("ReactAppPolicy", policy =>
+        {
+            // React projenin tam çalıştığı adresi buraya yazmalısın (Sonunda / işareti olmasın)
+            policy.WithOrigins("http://localhost:5173")
+                  .AllowAnyHeader()  // Her türlü başlığa izin ver
+                  .AllowAnyMethod(); // GET, POST, PUT, DELETE hepsine izin ver
+        });
+    });
+
+   
 
     //"SabitZamanliKural" adında, 10 saniyede maksimum 5 isteğe izin veren, sınırı aşanı da sıraya sokmadan anında 429 Too Many Requests hatasıyla reddeden bir politika oluşturuyoruz.
     builder.Services.AddRateLimiter(options =>
@@ -259,7 +272,8 @@ try
 
     app.UseRouting();
 
-    app.UseCors("AllowFrontend");
+    // CORS VIP listesini tam bu noktada aktif ediyoruz
+    app.UseCors("ReactAppPolicy");
 
     // GÜVENLİK 
     app.UseAuthentication();
