@@ -1,5 +1,7 @@
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.IdentityModel.Tokens;
@@ -12,7 +14,7 @@ using OtoServis.Data.Repositories;
 using OtoServisApi.Services;
 using Serilog;
 using System.Text;
-using Microsoft.AspNetCore.RateLimiting;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 
 // 1. Uygulama ayağa kalkmadan hemen önce Serilog yapılandırmasını başlatıyoruz
@@ -69,25 +71,25 @@ try
                     Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Key"]!))
             };
 
-            // 2. Redis Kara Liste Kontrolü (Bahsettiğim options.Events kısmı)
-            //options.Events = new JwtBearerEvents
-            //{
-            //    OnTokenValidated = async context =>
-            //    {
-            //        var cache = context.HttpContext.RequestServices.GetRequiredService<IDistributedCache>();
-            //        var rawToken = context.Request.Headers["Authorization"].ToString().Replace("Bearer ", "").Trim();
+            //2.Redis Kara Liste Kontrolü(Bahsettiğim options.Events kısmı)
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = async context =>
+                {
+                    var cache = context.HttpContext.RequestServices.GetRequiredService<IDistributedCache>();
+                    var rawToken = context.Request.Headers["Authorization"].ToString().Replace("Bearer ", "").Trim();
 
-            //        if (!string.IsNullOrEmpty(rawToken))
-            //        {
-            //            var isBlacklisted = await cache.GetStringAsync($"blacklist:{rawToken}");
-            //            if (!string.IsNullOrEmpty(isBlacklisted))
-            //            {
-            //                // Token Redis'te kara listedeyse isteği hemen kapıda reddet
-            //                context.Fail("Bu oturum sonlandırılmıştır. Lütfen tekrar giriş yapın.");
-            //            }
-            //        }
-            //    }
-            //};
+                    if (!string.IsNullOrEmpty(rawToken))
+                    {
+                        var isBlacklisted = await cache.GetStringAsync($"blacklist:{rawToken}");
+                        if (!string.IsNullOrEmpty(isBlacklisted))
+                        {
+                            // Token Redis'te kara listedeyse isteği hemen kapıda reddet
+                            context.Fail("Bu oturum sonlandırılmıştır. Lütfen tekrar giriş yapın.");
+                        }
+                    }
+                }
+            };
         });
     builder.Services.AddAuthorization();
 
@@ -178,15 +180,44 @@ try
         });
     });
 
+    // Sistemin "Ben hayattayım ve çalışıyorum" diyebilmesi için sağlık kontrolü servisini (Health Check) belleğe ekliyoruz.
+    // Canlıya çıktığımızda UptimeRobot gibi sistemler uygulamamızın çöküp çökmediğini bu servis sayesinde anlayacak.
+    builder.Services.AddHealthChecks();
 
     // =======================================================
     // 2. UYGULAMANIN İNŞASI VE ARA YAZILIM (MIDDLEWARE) HATTI
     // =======================================================
     var app = builder.Build();
-      
 
-        // Geliştirme ortamı ayarları
-        if (app.Environment.IsDevelopment())
+    // ===============================================================
+    // UYGULAMA ÇÖKME KALKANI (GLOBAL ERROR HANDLER)
+    // ===============================================================
+    // Eğer uygulamanın derinliklerinde (veritabanı kopması, null referans vb.) ölümcül bir hata (Exception) fırlatılırsa,
+    // bu kalkan devreye girer. Kırmızı C# hata kodlarının (Stack Trace) müşterinin ekranına sızmasını kesin olarak engeller.
+    app.UseExceptionHandler(appError =>
+    {
+        appError.Run(async context =>
+        {
+            // Müşteriye döneceğimiz HTTP durum kodunu her zaman "500 - Sunucu Hatası" olarak sabitliyoruz.
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/json";
+
+            var contextFeature = context.Features.Get<IExceptionHandlerFeature>();
+            if (contextFeature != null)
+            {
+                // Hatanın teknik detayları (contextFeature.Error) sunucuda gizli kalır ve GlobalAuditMiddleware tarafından loglanır.
+                // Müşteriye ise panik yaratmamak için sadece aşağıdaki kibar ve standart JSON mesajı fırlatılır.
+                var errorResponse = new { Mesaj = "Sunucu tarafında beklenmeyen bir hata oluştu. Teknik ekip bilgilendirildi." };
+                await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            }
+        });
+    });
+
+
+
+
+    // Geliştirme ortamı ayarları
+    if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
         app.UseSwaggerUI();
@@ -207,6 +238,10 @@ try
     app.UseAuthorization();
     
     app.MapControllers();
+
+    // Sistemin sağlık durumunu dış dünyaya açtığımız uç nokta (endpoint).
+    // Tarayıcıdan "/api/health" adresine girildiğinde, sistem sorunsuz çalışıyorsa ekrana sadece "Healthy" (Sağlıklı) yazar.
+    app.MapHealthChecks("/api/health");
 
     //istemcilerin bağlanacağı adres (endpoint)
     app.MapHub<OtoServisApi.Hubs.NotificationHub>("/notificationHub");
