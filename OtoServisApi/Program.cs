@@ -222,6 +222,38 @@ try
     }
 
     app.UseHttpsRedirection();
+
+    // ==========================================
+    // HTTP GÜVENLİK BAŞLIKLARI (SECURITY HEADERS)
+    // ==========================================
+    // Bu middleware (ara yazılım), API'mizin dış dünyaya verdiği her yanıta 
+    // otomatik olarak dijital güvenlik kuralları ekler.
+    app.Use(async (context, next) =>
+    {
+        // 1. CLICKJACKING (Tıklama Hırsızlığı) KORUMASI
+        // Kötü niyetli bir sitenin, bizim projemizi kendi sayfası içine 
+        // görünmez bir çerçeve (<iframe>) olarak gömüp kullanıcıları 
+        // yanlışlıkla bizim butonlarımıza tıklatmaya zorlamasını kesinlikle (DENY) yasaklar.
+        context.Response.Headers.Add("X-Frame-Options", "DENY");
+
+        // 2. MIME-SNIFFING (Dosya Türü Koklama) KORUMASI
+        // Tarayıcıya şu emri verir: "Ben sana bu dosya bir metin veya resim diyorsam odur. 
+        // İçeriğine bakıp (sniff) uyanıklık yaparak zararlı bir script gibi çalıştırmaya kalkma!"
+        context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
+
+        // 3. TEMEL XSS (Cross-Site Scripting) KORUMASI
+        // Tarayıcının içine gömülü olan yerleşik XSS filtresini açar (1). 
+        // Eğer sayfada zararlı bir script sızması tespit edilirse, sayfayı 
+        // temizlemeye çalışmak yerine riske girmeyip işlemi tamamen durdurur (mode=block).
+        context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
+
+        // Başlıklar eklendikten sonra, isteğin takılmadan normal 
+        // yolculuğuna (diğer middleware'lere veya controller'a) devam etmesini sağlar.
+        await next();
+    });
+
+    // NOT: Bu kod bloğunu Program.cs içinde 'app.UseHttpsRedirection();' satırının hemen 
+    // altına, kontrolörler haritalanmadan (app.MapControllers) önce yapıştırmalısın.
     app.UseCors("AllowAll");
     app.UseStaticFiles();
 
