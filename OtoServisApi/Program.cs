@@ -117,18 +117,7 @@ try
         });
     });
 
-    builder.Services.AddCors(options =>
-    {
-        options.AddPolicy("AllowFrontend", policy =>
-        {
-            // AllowAnyOrigin YERİNE bunu kullanıyoruz. Hem her şeye izin verir, hem çökmez.
-            policy.SetIsOriginAllowed(origin => true)
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials(); // SignalR için mecburi
-        });
-    });
-
+    
    
 
 
@@ -178,7 +167,7 @@ try
     }
 
     app.UseHttpsRedirection();
-    app.UseCors("AllowAll");
+   
     app.UseStaticFiles();
 
     app.UseRouting();
