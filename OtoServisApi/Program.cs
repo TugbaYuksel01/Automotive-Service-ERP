@@ -257,7 +257,7 @@ try
 
     // NOT: Bu kod bloğunu Program.cs içinde 'app.UseHttpsRedirection();' satırının hemen 
     // altına, kontrolörler haritalanmadan (app.MapControllers) önce yapıştırmalısın.
-    app.UseCors("AllowAll");
+    
     app.UseStaticFiles();
 
     app.UseRouting();
