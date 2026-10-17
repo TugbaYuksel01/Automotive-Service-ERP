@@ -170,12 +170,10 @@ try
     //"SabitZamanliKural" adında, 10 saniyede maksimum 5 isteğe izin veren, sınırı aşanı da sıraya sokmadan anında 429 Too Many Requests hatasıyla reddeden bir politika oluşturuyoruz.
     builder.Services.AddRateLimiter(options =>
     {
-        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-
         options.AddFixedWindowLimiter("SabitZamanliKural", opt =>
         {
             opt.Window = TimeSpan.FromSeconds(10);
-            opt.PermitLimit = 5;
+            opt.PermitLimit = 40; // <-- 5 yerine 40 yapıyoruz
             opt.QueueLimit = 0;
         });
     });

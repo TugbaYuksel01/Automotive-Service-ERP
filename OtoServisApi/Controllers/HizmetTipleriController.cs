@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace OtoServisApi.Controllers
 {
-    [EnableRateLimiting("SabitZamanliKural")]
+    
     [Route("api/[controller]")]
     [ApiController]
     public class HizmetTipleriController : ControllerBase
