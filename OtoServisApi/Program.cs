@@ -162,6 +162,19 @@ try
     // Dış İstekler ve Arka Plan Görevleri
     builder.Services.AddHttpClient();
     builder.Services.AddHostedService<KaynakPlanlamaMotoru>();
+    // React frontend'ine API ile konuşma yetkisi veriyoruz (VIP Liste)
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("ReactAppPolicy", policy =>
+        {
+            // React projenin tam çalıştığı adresi buraya yazmalısın (Sonunda / işareti olmasın)
+            policy.WithOrigins("http://localhost:5173")
+                  .AllowAnyHeader()  // Her türlü başlığa izin ver
+                  .AllowAnyMethod(); // GET, POST, PUT, DELETE hepsine izin ver
+        });
+    });
+
+   
 
 
     // =======================================================
@@ -183,7 +196,8 @@ try
 
     app.UseRouting();
 
-    app.UseCors("AllowFrontend");
+    // CORS VIP listesini tam bu noktada aktif ediyoruz
+    app.UseCors("ReactAppPolicy");
 
     // GÜVENLİK 
     app.UseAuthentication();
