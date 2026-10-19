@@ -23,7 +23,7 @@ export default function UserProfilePage() {
     const fetchProfil = async () => {
       try {
         const token = sessionStorage.getItem('token');
-        const response = await axios.get('https://localhost:5001/api/Auth/profil', {
+        const response = await axios.get('http://otoservisapi.somee.com/api/Auth/profil', {
           headers: { Authorization: `Bearer ${token}` }
         });
         setFormData(response.data);
@@ -41,7 +41,7 @@ export default function UserProfilePage() {
     setMesaj(null);
     try {
       const token = sessionStorage.getItem('token');
-      const response = await axios.put('https://localhost:5001/api/Auth/profil-guncelle', formData, {
+      const response = await axios.put('http://otoservisapi.somee.com/api/Auth/profil-guncelle', formData, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setMesaj({ tip: 'success', metin: response.data.mesaj || 'Profil bilgileriniz başarıyla güncellendi!' });
@@ -58,7 +58,7 @@ export default function UserProfilePage() {
   setMesaj(null);
   try {
     const token = sessionStorage.getItem('token');
-    const response = await axios.put('https://localhost:5001/api/Auth/sifre-guncelle', passwordData, {
+    const response = await axios.put('http://otoservisapi.somee.com/api/Auth/sifre-guncelle', passwordData, {
       headers: { Authorization: `Bearer ${token}` }
     });
     
