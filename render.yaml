@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: otoservis-worker
+    env: docker
+    region: ohio
+    plan: free
+    branch: feat/bulut-ayarlari
+    rootDir: .
+    dockerfilePath: OtoServis.Worker/Dockerfile
