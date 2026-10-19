@@ -35,11 +35,16 @@ builder.Services.AddMassTransit(x =>
 
     x.UsingRabbitMq((context, cfg) =>
     {
-        cfg.Host("localhost", "/", h =>
+        var rabbitMqConnectionString =
+            builder.Configuration["RabbitMQ:ConnectionString"];
+
+        if (string.IsNullOrWhiteSpace(rabbitMqConnectionString))
         {
-            h.Username("guest");
-            h.Password("guest");
-        });
+            throw new InvalidOperationException(
+                "RabbitMQ bağlantı adresi bulunamadı.");
+        }
+
+        cfg.Host(new Uri(rabbitMqConnectionString));
 
         cfg.ConfigureEndpoints(context);
     });

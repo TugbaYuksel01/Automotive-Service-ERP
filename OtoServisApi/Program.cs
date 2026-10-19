@@ -145,11 +145,18 @@ try
     {
         x.UsingRabbitMq((context, cfg) =>
         {
-            cfg.Host("localhost", "/", h =>
+            var rabbitMqConnectionString =
+                builder.Configuration["RabbitMQ:ConnectionString"];
+
+            if (string.IsNullOrWhiteSpace(rabbitMqConnectionString))
             {
-                h.Username("guest");
-                h.Password("guest");
-            });
+                throw new InvalidOperationException(
+                    "RabbitMQ bağlantı adresi bulunamadı.");
+            }
+
+            cfg.Host(new Uri(rabbitMqConnectionString));
+
+            cfg.ConfigureEndpoints(context);
         });
     });
 
@@ -162,7 +169,7 @@ try
         options.AddPolicy("ReactAppPolicy", policy =>
         {
             // React projenin tam çalıştığı adresi buraya yazmalısın (Sonunda / işareti olmasın)
-            policy.WithOrigins("http://localhost:5173")
+            policy.WithOrigins("http://otoservisapi.somee.com")
                   .AllowAnyHeader()  // Her türlü başlığa izin ver
                   .AllowAnyMethod(); // GET, POST, PUT, DELETE hepsine izin ver
         });
@@ -216,13 +223,11 @@ try
 
 
 
-
-    // Geliştirme ortamı ayarları
-    if (app.Environment.IsDevelopment())
-    {
+   
+    
         app.UseSwagger();
         app.UseSwaggerUI();
-    }
+    
 
     app.UseHttpsRedirection();
 
