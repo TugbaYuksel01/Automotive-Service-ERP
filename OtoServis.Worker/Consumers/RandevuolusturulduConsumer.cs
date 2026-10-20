@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-
 using MassTransit;
+using Microsoft.Extensions.Configuration; // YENİ EKLENDİ
+using Microsoft.Extensions.Logging;
 using OtoServis.Contracts.Events;
 using OtoServis.Worker.Services;
 
@@ -14,11 +15,17 @@ namespace OtoServis.Worker.Consumers
     {
         private readonly IMailService _mailService;
         private readonly ILogger<RandevuOlusturulduConsumer> _logger;
+        private readonly IConfiguration _configuration; // YENİ EKLENDİ
 
-        public RandevuOlusturulduConsumer(IMailService mailService, ILogger<RandevuOlusturulduConsumer> logger)
+        // Constructor'a IConfiguration inject ettik
+        public RandevuOlusturulduConsumer(
+            IMailService mailService, 
+            ILogger<RandevuOlusturulduConsumer> logger,
+            IConfiguration configuration)
         {
             _mailService = mailService;
             _logger = logger;
+            _configuration = configuration;
         }
 
         public async Task Consume(ConsumeContext<RandevuOlusturulduEvent> context)
@@ -26,7 +33,9 @@ namespace OtoServis.Worker.Consumers
             var data = context.Message;
             _logger.LogInformation("Worker: Randevu #{RandevuId} kuyruktan alındı, mail hazırlanıyor...", data.RandevuId);
 
-            string frontendUrl = "http://localhost:5173";
+            // ESKİ HALİ: string frontendUrl = "http://localhost:5173";
+            // YENİ HALİ: AppSettings veya Environment Variables üzerinden oku, bulamazsan localhost'a düş
+            string frontendUrl = _configuration["FrontendUrl"] ?? "http://localhost:5173";
 
             // --- DİNAMİK MANTIK BURADA ÇALIŞIYOR ---
             string butonLinki = data.IsMisafir
