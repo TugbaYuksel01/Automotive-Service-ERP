@@ -1,8 +1,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
+
+# Tüm çözümü ve klasörleri kopyala ki Contracts gibi ortak projeleri bulabilsin
 COPY . .
-RUN dotnet restore "OtoServis.Worker.csproj"
-RUN dotnet publish "OtoServis.Worker.csproj" -c Release -o /app/publish
+
+# Worker projesini kök dizindeki yolu belirterek restore ve publish et
+RUN dotnet restore "OtoServis.Worker/OtoServis.Worker.csproj"
+RUN dotnet publish "OtoServis.Worker/OtoServis.Worker.csproj" -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/runtime:9.0 AS final
 WORKDIR /app
